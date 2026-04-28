@@ -55,6 +55,21 @@ struct sRenderable
 	float distance; // If the material is see-through, we must order by distance. (Z-Direction)
 };
 
+std::vector<sRenderable> render_list; // render_list that includes everything that is to be rendered.
+
+
+/** * Recursively flattens the scene hierarchy into a linear render list.
+ * Transforms local node coordinates into World Space for the GPU.
+ */
+void addSubtree(Node* node) {
+	if (!node) return;
+	render_list.push_back({
+		.mesh = node->mesh,
+		.material = node->material,
+		.model = node->getGlobalMatrix()
+		});
+	for (Node* child : node->children) addSubtree(child);
+}
 
 
 void Renderer::parseSceneEntities(SCN::Scene* scene, Camera* cam) {
@@ -78,6 +93,8 @@ void Renderer::parseSceneEntities(SCN::Scene* scene, Camera* cam) {
 	}
 	
 }
+
+
 
 void Renderer::renderScene(SCN::Scene* scene, Camera* camera)
 {
