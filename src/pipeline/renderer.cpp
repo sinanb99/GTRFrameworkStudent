@@ -46,6 +46,17 @@ void Renderer::setupScene()
 		skybox_cubemap = nullptr;
 }
 
+// This is our struct that describes the renderables. 
+struct sRenderable
+{
+	GFX::Mesh* mesh; // Pointer to the Vertex, or Index Buffer. This is the "what" of the object (3D coordiantes, normals,...)
+	SCN::Material* material; // This defines Shaders and Textures, tells GPU how to interpret light, color, and roughness
+	Matrix44 model; // The transfomration to move from object space to world space
+	float distance; // If the material is see-through, we must order by distance. (Z-Direction)
+};
+
+
+
 void Renderer::parseSceneEntities(SCN::Scene* scene, Camera* cam) {
 	// HERE =====================
 	// TODO: GENERATE RENDERABLES
