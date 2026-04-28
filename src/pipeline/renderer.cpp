@@ -71,11 +71,38 @@ void addSubtree(Node* node) {
 	for (Node* child : node->children) addSubtree(child);
 }
 
+void parseNode(Node* node, Camera* cam) {
+	if (!node) {
+		return;
+	}
+
+	if (node->mesh) {
+		BoundingBox worldBox = transformBoundingBox(node->getGlobalMatrix(), node->mesh->box);
+		char res = cam->testBoxInFrustum(worldBox.center, worldBox.halfsize);
+		if (res == CLIP_OUTSIDE) {
+			return;
+		}
+		else if (res == CLIP_INSIDE) {
+			addSubtree(node);
+			return;
+		}
+	}
+
+	render_list.push_back({
+		.mesh = node->mesh,
+		.material = node->material,
+		.model = node->getGlobalMatrix()
+		});
+
+		for (Node* child : node->children) {
+			parseNode(child, cam);
+		}
+}
+
 
 void Renderer::parseSceneEntities(SCN::Scene* scene, Camera* cam) {
-	// HERE =====================
-	// TODO: GENERATE RENDERABLES
-	// ==========================
+	render_list.clear();
+
 
 	for (int i = 0; i < scene->entities.size(); i++) {
 		BaseEntity* entity = scene->entities[i];
@@ -84,9 +111,15 @@ void Renderer::parseSceneEntities(SCN::Scene* scene, Camera* cam) {
 			continue;
 		}
 
-		// Store Prefab Entitys
-		// ...
-		//		Store Children Prefab Entities
+		// If the entity is a Prefab, cast it and traverse its internal scene graph for rendering. 
+		if (entity->getType() == eEntityType::PREFAB) {
+
+			PrefabEntity* e = (PrefabEntity*)entity;
+
+			parseNode(&(entity->root), cam);
+
+		}
+
 
 		// Store Lights
 		// ...
