@@ -56,6 +56,11 @@ void Material::Release()
 	sMaterials.clear();
 }
 
+// Transparency checker for Assignment 1
+bool Material::isTransparent() const {
+	return alpha_mode == SCN::eAlphaMode::BLEND;
+}
+
 void Material::bind(GFX::Shader* shader) {
 	// First, configure the OpenGL state with the material settings =======================
 	{
