@@ -46,10 +46,68 @@ void Renderer::setupScene()
 		skybox_cubemap = nullptr;
 }
 
+// This is our struct that describes the renderables. 
+struct sRenderable
+{
+	GFX::Mesh* mesh; // Pointer to the Vertex, or Index Buffer. This is the "what" of the object (3D coordiantes, normals,...)
+	SCN::Material* material; // This defines Shaders and Textures, tells GPU how to interpret light, color, and roughness
+	Matrix44 model; // The transfomration to move from object space to world space
+	float distance; // If the material is see-through, we must order by distance. (Z-Direction)
+};
+
+std::vector<sRenderable> render_list; // render_list that includes everything that is to be rendered.
+std::vector<sRenderable> opaque_list; // only not see through things
+std::vector<sRenderable> transparent_list; // See through things, ordered the other way around
+
+
+
+/** * Recursively flattens the scene hierarchy into a linear render list.
+ * Transforms local node coordinates into World Space for the GPU.
+ */
+void addSubtree(Node* node) {
+	if (!node) return;
+	render_list.push_back({
+		.mesh = node->mesh,
+		.material = node->material,
+		.model = node->getGlobalMatrix()
+		});
+	for (Node* child : node->children) addSubtree(child);
+}
+
+void parseNode(Node* node, Camera* cam) {
+	if (!node) {
+		return;
+	}
+
+	if (node->mesh) {
+		BoundingBox worldBox = transformBoundingBox(node->getGlobalMatrix(), node->mesh->box);
+		char res = cam->testBoxInFrustum(worldBox.center, worldBox.halfsize);
+		if (res == CLIP_OUTSIDE) {
+			return;
+		}
+		else if (res == CLIP_INSIDE) {
+			addSubtree(node);
+			return;
+		}
+	}
+
+	render_list.push_back({
+		.mesh = node->mesh,
+		.material = node->material,
+		.model = node->getGlobalMatrix()
+		});
+
+	for (Node* child : node->children) {
+			parseNode(child, cam);  // Iterating through children
+		}
+}
+
+
 void Renderer::parseSceneEntities(SCN::Scene* scene, Camera* cam) {
-	// HERE =====================
-	// TODO: GENERATE RENDERABLES
-	// ==========================
+	render_list.clear();
+	opaque_list.clear();
+	transparent_list.clear();
+
 
 	for (int i = 0; i < scene->entities.size(); i++) {
 		BaseEntity* entity = scene->entities[i];
@@ -58,20 +116,52 @@ void Renderer::parseSceneEntities(SCN::Scene* scene, Camera* cam) {
 			continue;
 		}
 
-		// Store Prefab Entitys
-		// ...
-		//		Store Children Prefab Entities
+		// If the entity is a Prefab, cast it and traverse its internal scene graph for rendering. 
+		if (entity->getType() == eEntityType::PREFAB) {
+
+			PrefabEntity* e = (PrefabEntity*)entity;
+
+			parseNode(&(entity->root), cam);
+
+		}
+	}
+
+	// For loop to implement transparent and opaque list
+	for (sRenderable& r : render_list) {
+		//compute distance from camera to object using model translation
+		if (cam)
+			r.distance = r.model.getTranslation().distance(cam->eye);
+		else
+			r.distance = 0.0f;
+
+		// alpha cutoff as opaque and BLEND as transparent
+		// Check for transparency -> add to list, else opaque
+		if (r.material && r.material->isTransparent())
+			transparent_list.push_back(r);
+		else
+			opaque_list.push_back(r);
+		
+	}
+
 
 		// Store Lights
 		// ...
-	}
+	
 	
 }
+
+
 
 void Renderer::renderScene(SCN::Scene* scene, Camera* camera)
 {
 	this->scene = scene;
 	setupScene();
+
+	//Camera updates are processed here before rendering
+
+	camera->updateViewMatrix();
+	camera->updateProjectionMatrix();
+	camera->extractFrustum();
 
 	parseSceneEntities(scene, camera);
 
@@ -86,9 +176,33 @@ void Renderer::renderScene(SCN::Scene* scene, Camera* camera)
 	if(skybox_cubemap)
 		renderSkybox(skybox_cubemap);
 
-	// HERE =====================
-	// TODO: RENDER RENDERABLES
-	// ==========================
+	glEnable(GL_DEPTH_TEST);
+	glDepthMask(GL_TRUE);
+	glDisable(GL_BLEND);
+
+
+	// Opaque pass instead of just calling a material.
+	for (sRenderable& opaque_call : opaque_list) {
+		renderMeshWithMaterial(opaque_call.model, opaque_call.mesh, opaque_call.material);
+	}
+
+	// Transparency pass and resort first 
+	std::sort(transparent_list.begin(), transparent_list.end(),
+		[](const sRenderable& a, const sRenderable& b) {return a.distance > b.distance; });
+	
+	glEnable(GL_DEPTH_TEST);
+	glDepthMask(GL_FALSE);
+	glEnable(GL_BLEND);
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+	for (const sRenderable& call : transparent_list) {
+		renderMeshWithMaterial(call.model, call.mesh, call.material);
+	}
+
+	// Restore defaults
+	glDepthMask(GL_TRUE);
+	glDisable(GL_BLEND);
+
 }
 
 
@@ -180,7 +294,7 @@ void Renderer::renderMeshWithMaterial(const Matrix44 model, GFX::Mesh* mesh, SCN
 	shader->disable();
 
 	//set the render state as it was before to avoid problems with future renders
-	glDisable(GL_BLEND);
+	//glDisable(GL_BLEND);
 	glPolygonMode( GL_FRONT_AND_BACK, GL_FILL );
 }
 
