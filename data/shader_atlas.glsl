@@ -305,8 +305,8 @@ void main()
 		float dist = length(L);
 		L = normalize(L); // normalize after getting distance
 
-		// Attenuation (Light intensity falls off with distance squared)
-		float attenuation = 1.0 / (dist * dist);
+		// Attenuation (Light intensity falls off with distance squared) Works only for point lights like that
+		float attenuation = 1.0 / (1.0 + dist * dist);
 		vec3 light_energy = u_light_colors[i] * u_light_intensities[i] * attenuation;
 
 		// Diffuse (Lambert)
@@ -317,7 +317,7 @@ void main()
 		vec3 R = reflect(-L, N);
 		float RdotV = max(0.0, dot(R, V));
 		float spec_factor = pow(RdotV, shininess);
-		vec3 specular = spec_factor * light_energy;
+		vec3 specular = (NdotL > 0.0) ? (spec_factor * light_energy) : vec3(0.0);
 
 		total_direct_light += (diffuse * base_color) + specular;
 	}

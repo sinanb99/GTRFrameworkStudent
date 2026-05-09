@@ -106,7 +106,6 @@ void Renderer::parseSceneEntities(SCN::Scene* scene, Camera* cam) {
 	render_list.clear();
 	opaque_list.clear();
 	transparent_list.clear();
-	lights_list.clear();
 
 
 	
@@ -173,6 +172,7 @@ void Renderer::renderScene(SCN::Scene* scene, Camera* camera)
 	camera->updateProjectionMatrix();
 	camera->extractFrustum();
 
+	lights_list.clear();
 	parseSceneEntities(scene, camera);
 
 	//set the clear color (the background color)
