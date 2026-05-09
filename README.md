@@ -1,3 +1,6 @@
+# Reminder
+As it heavily depends on the build, we will try to only push the needed files (Its more a reminder to myself tbh)
+
 # GTR Framework
 OpenGL C++ Framework used for teach the Real-time Grapchics course at Universitat Pompeu Fabra.
 
