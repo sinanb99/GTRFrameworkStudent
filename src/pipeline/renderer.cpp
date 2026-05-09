@@ -273,6 +273,7 @@ void Renderer::renderMeshWithMaterial(const Matrix44 model, GFX::Mesh* mesh, SCN
 	//chose a shader
 	// FOR TESTING WE CAN TURN THIS ON AGAIN
 	//shader = GFX::Shader::Get("texture");
+	
 	// For Assignment 2, we are changing this to lighting!
 	shader = GFX::Shader::Get("lighting");
 
@@ -286,9 +287,23 @@ void Renderer::renderMeshWithMaterial(const Matrix44 model, GFX::Mesh* mesh, SCN
 	material->bind(shader);
 
 	// We are preparing our color, and intensities from the shader.
-	std::vector<vec3> light_positions; // This gives us the position of the lights
-	std::vector<vec3> light_colors; // This is the RGB values of the light that is emitted.
-	std::vector<float> intensities; // Lightintensity as we know it.
+	std::vector<vec3> light_positions;		// This gives us the position of the lights
+	std::vector<vec3> light_colors;			// This is the RGB values of the light that is emitted.
+	std::vector<float> light_intensities;	// Lightintensity as we know it.
+
+	// Here we fill the lists we just defined
+	for (LightEntity* light : lights_list) {
+		light_positions.push_back(light->root.getGlobalMatrix().getTranslation());		// Light positions
+		light_colors.push_back(light->color);											// Light colors
+		light_intensities.push_back(light->intensity);									// Light intensity
+	}
+
+	// upload the shader uniforms so we can use them in the shader.
+	shader->setUniform("u_num_lights", (int)light_positions.size());										//set a uniform for the amount of lights existing
+	shader->setUniform3Array("u_light_positions", (float*)light_positions.data(), light_positions.size());  //set a uniform to access light positions
+	shader->setUniform3Array("u_light_colors", (float*)light_colors.data(), light_positions.size());		//set a uniform to access light colors 
+	shader->setUniform1Array("u_light_intensities", light_intensities.data(), light_positions.size());		//set a uniform to access light intensities
+
 
 
 	//upload uniforms
