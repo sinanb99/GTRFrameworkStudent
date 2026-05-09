@@ -106,7 +106,7 @@ void Renderer::parseSceneEntities(SCN::Scene* scene, Camera* cam) {
 	render_list.clear();
 	opaque_list.clear();
 	transparent_list.clear();
-
+	lights_list.clear();
 
 
 	
