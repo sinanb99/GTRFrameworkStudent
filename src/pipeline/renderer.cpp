@@ -60,7 +60,6 @@ std::vector<sRenderable> opaque_list; // only not see through things
 std::vector<sRenderable> transparent_list; // See through things, ordered the other way around
 
 
-
 /** * Recursively flattens the scene hierarchy into a linear render list.
  * Transforms local node coordinates into World Space for the GPU.
  */
@@ -109,6 +108,8 @@ void Renderer::parseSceneEntities(SCN::Scene* scene, Camera* cam) {
 	transparent_list.clear();
 
 
+
+	
 	for (int i = 0; i < scene->entities.size(); i++) {
 		BaseEntity* entity = scene->entities[i];
 
@@ -124,6 +125,15 @@ void Renderer::parseSceneEntities(SCN::Scene* scene, Camera* cam) {
 			parseNode(&(entity->root), cam);
 
 		}
+
+		// Here we get the lights list, we do it just like the PREFABs -> Now we can work with the lights list.
+		if (entity->getType() == eEntityType::LIGHT) {
+
+			LightEntity* light = (LightEntity*)entity; // Here we are specifically telling the compiler that we are working with a LightEntity so we have access to other values.
+
+			lights_list.push_back(light); // Push back the light we just established into a list. 
+		}
+
 	}
 
 	// For loop to implement transparent and opaque list
@@ -261,7 +271,10 @@ void Renderer::renderMeshWithMaterial(const Matrix44 model, GFX::Mesh* mesh, SCN
 	glEnable(GL_DEPTH_TEST);
 
 	//chose a shader
-	shader = GFX::Shader::Get("texture");
+	// FOR TESTING WE CAN TURN THIS ON AGAIN
+	//shader = GFX::Shader::Get("texture");
+	// For Assignment 2, we are changing this to lighting!
+	shader = GFX::Shader::Get("lighting");
 
     assert(glGetError() == GL_NO_ERROR);
 
@@ -271,6 +284,12 @@ void Renderer::renderMeshWithMaterial(const Matrix44 model, GFX::Mesh* mesh, SCN
 	shader->enable();
 
 	material->bind(shader);
+
+	// We are preparing our color, and intensities from the shader.
+	std::vector<vec3> light_positions; // This gives us the position of the lights
+	std::vector<vec3> light_colors; // This is the RGB values of the light that is emitted.
+	std::vector<float> intensities; // Lightintensity as we know it.
+
 
 	//upload uniforms
 	shader->setUniform("u_model", model);

@@ -84,6 +84,9 @@ void Material::bind(GFX::Shader* shader) {
 	}
 
 	// Bind the textures and set uniforms =======================
+	/* Before implementing Assignment 2, we are computing every texture with ALBEDO.
+	   Now we need to swtich for the metallic_roughness, the normal map and else.
+	*/
 	{
 		GFX::Texture* texture = textures[SCN::eTextureChannel::ALBEDO].texture;
 
