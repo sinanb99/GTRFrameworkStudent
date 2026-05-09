@@ -305,7 +305,6 @@ void Renderer::renderMeshWithMaterial(const Matrix44 model, GFX::Mesh* mesh, SCN
 	shader->setUniform1Array("u_light_intensities", light_intensities.data(), light_positions.size());		//set a uniform to access light intensities
 
 
-
 	//upload uniforms
 	shader->setUniform("u_model", model);
 

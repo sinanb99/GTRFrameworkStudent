@@ -107,6 +107,9 @@ void Material::bind(GFX::Shader* shader) {
 		if (texture)
 			shader->setUniform("u_texture", texture, 0);
 
+		// We are adding the roughness here and adding it as a uniform to send it to our shader (Assignment 2)
+		shader->setUniform("u_roughness", roughness_factor);
+
 		// This is used to say which is the alpha threshold to what we should not paint a pixel on the screen (to cut polygons according to texture alpha)
 		shader->setUniform("u_alpha_cutoff", alpha_mode == SCN::eAlphaMode::MASK ? alpha_cutoff : 0.001f);
 	}
