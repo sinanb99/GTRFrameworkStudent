@@ -4,6 +4,7 @@ texture basic.vs texture.fs
 skybox basic.vs skybox.fs
 depth quad.vs depth.fs
 multi basic.vs multi.fs
+lighting basic.vs lighting.fs
 
 \perturbNormal
 
@@ -243,4 +244,84 @@ void main()
 
 	//calcule the position of the vertex using the matrices
 	gl_Position = u_viewprojection * vec4( v_world_position, 1.0 );
+}
+
+\lighting.fs
+
+#version 330 core
+
+// From basic.vs
+in vec3 v_world_position;
+in vec3 v_normal;
+in vec2 v_uv;
+
+// Material uniforms
+uniform vec4 u_color;
+uniform sampler2D u_texture;
+uniform float u_roughness;
+uniform float u_alpha_cutoff;
+
+// Camera uniform
+uniform vec3 u_camera_position;
+
+// Light Uniforms we just set for Assignment 2
+uniform int u_num_lights;
+uniform vec3 u_light_positions[10];
+uniform vec3 u_light_colors[10];
+uniform float u_light_intensities[10];
+
+out vec4 FragColor;
+
+void main()
+{
+	// We prepare the vectors for Phong - N, V
+	vec3 N = normalize(v_normal);								// Normal vector, so direction the surface is "facing"
+	vec3 V = normalize(u_camera_position - v_world_position);	// The direction from the pixel on the objects surface towards the camera.
+
+	// Get base texture color
+	vec4 tex_color = texture(u_texture, v_uv);					// Getting color of the texture
+	vec3 base_color = u_color.rgb * tex_color.rgb;				// calculating base color
+
+	// Alpha test (from Assignment 1)
+	if(u_color.a * tex_color.a < u_alpha_cutoff)
+		discard;
+
+	// Ambient component 
+	vec3 ambient = base_color * 0.1; // 0.1 is adjustable but used for a low light.
+
+	// Accumulator for direct light
+	vec3 total_direct_light = vec3(0.0);
+
+	// Calculate Phong Shininess from Roughness
+	// High roughness (1.0) -> low power (dull)
+	// low roughness (0.0) -> high power (shiny)
+	float shininess = pow(2.0, (1.0 - u_roughness) * 10.0);
+
+	// Loop through lights
+	for(int i = 0; i < u_num_lights; i++)
+	{
+		// Light vector
+		vec3 L = u_light_positions[i] - v_world_position;
+		float dist = length(L);
+		L = normalize(L); // normalize after getting distance
+
+		// Attenuation (Light intensity falls off with distance squared)
+		float attenuation = 1.0 / (dist * dist);
+		vec3 light_energy = u_light_colors[i] * u_light_intensities[i] * attenuation;
+
+		// Diffuse (Lambert)
+		float NdotL = max(0.0, dot(N, L));
+		vec3 diffuse = NdotL * light_energy;
+
+		// Specular (PHONG)
+		vec3 R = reflect(-L, N);
+		float RdotV = max(0.0, dot(R, V));
+		float spec_factor = pow(RdotV, shininess);
+		vec3 specular = spec_factor * light_energy;
+
+		total_direct_light += (diffuse * base_color) + specular;
+	}
+
+	// Final Color
+	FragColor = vec4(ambient + total_direct_light, u_color.a * tex_color.a);
 }
