@@ -30,8 +30,19 @@ namespace SCN {
 
 		SCN::Scene* scene;
 
+		// Shadow map resources
+		GFX::FBO* shadow_fbo = nullptr;
+		Camera* light_camera = nullptr;
+		Matrix44 light_viewprojection;
+		float shadow_bias = 0.001f;
+		int shadow_light_index = 0;
+		bool shadow_front_face_culling = true;
+
+		// And declare the method:
+		void renderShadowMap(SCN::Scene* scene);
+
 		//updated every frame
-		Renderer(const char* shaders_atlas_filename );
+		Renderer(const char* shaders_atlas_filename);
 
 		//just to be sure we have everything ready for the rendering
 		void setupScene();
@@ -51,6 +62,8 @@ namespace SCN {
 		void renderMeshWithMaterial(const Matrix44 model, GFX::Mesh* mesh, SCN::Material* material);
 
 		void showUI();
+
+
 	};
 
 };

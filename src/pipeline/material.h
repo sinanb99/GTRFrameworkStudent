@@ -77,5 +77,7 @@ namespace SCN {
 		void bind(GFX::Shader *shader);
 
 		static void Release();
+
+		bool isTransparent() const;
 	};
 };

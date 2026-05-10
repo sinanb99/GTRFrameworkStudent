@@ -11,7 +11,7 @@ std::map<std::string, Material*> Material::sMaterials;
 uint32 Material::s_last_index = 0;
 Material Material::default_material;
 
-const char* SCN::texture_channel_str[] = { "ALBEDO","EMISSIVE","OPACITY","METALLIC_ROUGHNESS","OCCLUSION","NORMALMAP" };
+const char* SCN::texture_channel_str[] = { "ALBEDO","EMISSIVE","OPACITY","METALLIC_ROUGHNESS","OCCLUSION","NORMALMAP", "SHININESS"};
 
 
 Material* Material::Get(const char* name)
@@ -80,7 +80,8 @@ void Material::bind(GFX::Shader* shader) {
 
 	// Bind the textures and set uniforms =======================
 	{
-		GFX::Texture* texture = textures[SCN::eTextureChannel::ALBEDO].texture;
+		GFX::Texture* albedo_tex = textures[SCN::eTextureChannel::ALBEDO].texture;
+
 
 		// HERE =====================
 		// TODO: Expand rfor the rest of materials (when you need to)
@@ -91,15 +92,33 @@ void Material::bind(GFX::Shader* shader) {
 		// ==========================
 
 		// We always force a default albedo texture
-		if (texture == NULL)
-			texture = GFX::Texture::getWhiteTexture(); //a 1x1 white texture
-
+		if (albedo_tex == NULL)
+			albedo_tex = GFX::Texture::getWhiteTexture(); //a 1x1 white texture
+		shader->setUniform("u_texture", albedo_tex, 0);
 		shader->setUniform("u_color", color);
 
-		if (texture)
-			shader->setUniform("u_texture", texture, 0);
+		// Shininess calculation, HAVE TO CHANGE THIS IN A BIT
+		float spec_power = pow(2.0, (1.0 - roughness_factor) * 7.0);
+
+		shader->setUniform("u_shininess", spec_power);
+
+		// Compute normal map textures for objects that have it.
+		GFX::Texture* normal_texture = textures[SCN::eTextureChannel::NORMALMAP].texture;
+		if (normal_texture) {
+			shader->setUniform("u_normal_texture", normal_texture, 1);
+			shader->setUniform("u_use_normal_map", 1);
+		}
+		else {
+			shader->setUniform("u_use_normal_map", 0);
+		}
 
 		// This is used to say which is the alpha threshold to what we should not paint a pixel on the screen (to cut polygons according to texture alpha)
 		shader->setUniform("u_alpha_cutoff", alpha_mode == SCN::eAlphaMode::MASK ? alpha_cutoff : 0.001f);
 	}
+}
+
+//Checks if Material is transparent
+bool Material::isTransparent() const
+{
+	return alpha_mode == SCN::eAlphaMode::BLEND;
 }

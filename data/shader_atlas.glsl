@@ -3,10 +3,11 @@ flat basic.vs flat.fs
 texture basic.vs texture.fs
 skybox basic.vs skybox.fs
 depth quad.vs depth.fs
+lighting basic.vs lighting.fs
 multi basic.vs multi.fs
+shadow basic.vs shadow.fs
 
 \perturbNormal
-
 // From https://github.com/glslify/glsl-perturb-normal/blob/master/cotangent-frame.glsl
 mat3 cotangent_frame(vec3 N, vec3 p, vec2 uv)
 {
@@ -243,4 +244,240 @@ void main()
 
 	//calcule the position of the vertex using the matrices
 	gl_Position = u_viewprojection * vec4( v_world_position, 1.0 );
+}
+
+
+\lighting.fs
+#version 330 core
+
+#define MAX_LIGHTS 5
+
+in vec3 v_world_position;
+in vec3 v_normal;
+in vec2 v_uv;
+
+uniform vec4 u_color;
+uniform sampler2D u_texture;
+uniform vec3 u_camera_position;
+uniform float u_shininess;
+
+uniform int u_num_lights;
+uniform vec3 u_light_positions[MAX_LIGHTS];
+uniform vec3 u_light_colors[MAX_LIGHTS];
+uniform float u_light_intensities[MAX_LIGHTS];
+uniform vec3 u_light_fronts[MAX_LIGHTS];
+uniform float u_light_types[MAX_LIGHTS];
+uniform vec2 u_light_cones[MAX_LIGHTS];
+
+uniform sampler2D u_normal_texture;
+uniform bool u_use_normal_map;
+uniform float u_alpha_cutoff;
+
+// Shadow map uniforms (3.3)
+uniform sampler2D u_shadow_map;
+uniform mat4 u_light_viewprojection;
+uniform float u_shadow_bias;
+
+out vec4 FragColor;
+
+// -------------------------------------------------------
+// Normal mapping
+// -------------------------------------------------------
+mat3 cotangent_frame(vec3 N, vec3 p, vec2 uv)
+{
+    vec3 dp1 = dFdx(p);
+    vec3 dp2 = dFdy(p);
+    vec2 duv1 = dFdx(uv);
+    vec2 duv2 = dFdy(uv);
+
+    vec3 dp2perp = cross(dp2, N);
+    vec3 dp1perp = cross(N, dp1);
+    vec3 T = dp2perp * duv1.x + dp1perp * duv2.x;
+    vec3 B = dp2perp * duv1.y + dp1perp * duv2.y;
+
+    float invmax = inversesqrt(max(dot(T, T), dot(B, B)));
+    return mat3(T * invmax, B * invmax, N);
+}
+
+vec3 perturbNormal(vec3 N, vec3 WP, vec2 uv, vec3 normal_pixel)
+{
+    mat3 TBN = cotangent_frame(N, WP, uv);
+    return normalize(TBN * normal_pixel);
+}
+
+// -------------------------------------------------------
+// Shadow
+// -------------------------------------------------------
+float computeShadow(vec3 world_pos)
+{
+    // Transform world pos into light clip space
+    vec4 light_clip = u_light_viewprojection * vec4(world_pos, 1.0);
+
+    // Perspective divide -> NDC [-1, 1]
+    vec3 ndc = light_clip.xyz / light_clip.w;
+
+    // Map to shadow map UV [0, 1]
+    vec2 shadow_uv = ndc.xy * 0.5 + 0.5;
+
+    // Outside light frustum = fully lit
+   if (ndc.x < -1.0 || ndc.x > 1.0 ||
+    ndc.y < -1.0 || ndc.y > 1.0 ||
+    ndc.z < -1.0 || ndc.z > 1.0)
+    return 1.0;
+
+    // Fragment depth from light POV, mapped [0,1]
+    float real_depth = ndc.z * 0.5 + 0.5;
+
+    // Apply shadow bias to avoid acne
+    real_depth -= u_shadow_bias;
+
+    // Sample the shadow map
+    float shadow_depth = texture(u_shadow_map, shadow_uv).r;
+
+    // In shadow if fragment is further from light than shadow map
+    return (real_depth > shadow_depth) ? 0.0 : 1.0;
+}
+
+// -------------------------------------------------------
+// Main
+// -------------------------------------------------------
+void main()
+{
+    vec4 tex_color = texture(u_texture, v_uv);
+    float alpha = tex_color.a * u_color.a;
+
+    if (alpha < u_alpha_cutoff)
+        discard;
+
+    vec3 albedo = tex_color.rgb * u_color.rgb;
+    vec3 V = normalize(u_camera_position - v_world_position);
+
+    // Normal setup
+    vec3 N = normalize(v_normal);
+    if (u_use_normal_map) {
+        vec3 normal_pixel = texture(u_normal_texture, v_uv).xyz * 2.0 - 1.0;
+        N = perturbNormal(N, v_world_position, v_uv, normal_pixel);
+    }
+
+    // Accumulators
+    vec3 diffuse_acc = vec3(0.0);
+    vec3 specular_acc = vec3(0.0);
+
+    for (int i = 0; i < u_num_lights; i++) {
+        if (i >= MAX_LIGHTS) break;
+
+        int type = int(u_light_types[i]);
+        vec3 L_dir;
+        float attenuation = 1.0;
+
+        if (type == 3) { // DIRECTIONAL
+            L_dir = normalize(-u_light_fronts[i]);
+            attenuation = 0.25;
+        }
+        else { // POINT or SPOT
+            vec3 L_vector = u_light_positions[i] - v_world_position;
+            L_dir = normalize(L_vector);
+            float dist = length(L_vector);
+            attenuation = 1.0 / (dist * dist);
+
+            if (type == 2) { // SPOT
+                vec3 D = normalize(u_light_fronts[i]);
+                float cos_alpha = dot(D, L_dir);
+
+                float cos_max = u_light_cones[i].x;
+                float cos_min = u_light_cones[i].y;
+
+                if (cos_alpha < cos_min) {
+                    attenuation = 0.0;
+                } else {
+                    float denominator = cos_max - cos_min;
+                    float spot_factor = clamp((cos_alpha - cos_min) / max(denominator, 0.0001), 0.0, 1.0);
+                    attenuation *= spot_factor;
+                }
+            }
+        }
+
+        float diff = max(dot(N, L_dir), 0.0);
+        vec3 R = reflect(-L_dir, N);
+        float spec = pow(max(dot(R, V), 0.0), u_shininess);
+
+        vec3 light_effective_color = u_light_colors[i] * u_light_intensities[i] * attenuation;
+
+        // Apply shadow only for the shadow-casting light (index 0).
+        float shadowFactor = (i == 2) ? computeShadow(v_world_position) : 1.0;
+
+        diffuse_acc  += diff * light_effective_color * shadowFactor;
+        specular_acc += spec * light_effective_color * shadowFactor;
+    }
+
+    // Final composition
+    vec3 ambient = albedo * 0.001;
+    vec3 final_color = ambient + (albedo * diffuse_acc) + specular_acc;
+
+    final_color = clamp(final_color, 0.0, 1.0);
+
+    FragColor = vec4(final_color, alpha);
+}
+
+\shadow.fs
+#version 330 core
+
+in vec3 v_world_position;
+in vec3 v_normal;
+in vec2 v_uv;
+
+uniform vec4 u_color;
+uniform sampler2D u_texture;
+uniform float u_alpha_cutoff;
+
+// Shadow map uniforms (3.3)
+uniform sampler2D u_shadow_map;
+uniform mat4 u_light_viewprojection;
+uniform float u_shadow_bias;
+
+out vec4 FragColor;
+
+// Returns 1.0 if lit, 0.0 if in shadow
+float computeShadow(vec3 world_pos)
+{
+    // Transform world pos into light clip space
+    vec4 light_clip = u_light_viewprojection * vec4(world_pos, 1.0);
+
+    // Perspective divide -> NDC [-1, 1]
+    vec3 ndc = light_clip.xyz / light_clip.w;
+
+    // Map to shadow map UV [0, 1]
+    vec2 shadow_uv = ndc.xy * 0.5 + 0.5;
+
+    // Outside light frustum = fully lit
+    if (shadow_uv.x < 0.0 || shadow_uv.x > 1.0 ||
+        shadow_uv.y < 0.0 || shadow_uv.y > 1.0)
+        return 1.0;
+
+    // Fragment depth from light POV, mapped [0,1]
+    float real_depth = ndc.z * 0.5 + 0.5;
+
+    // 3.4.1 — Apply shadow bias to avoid acne
+    real_depth -= u_shadow_bias;
+
+    // Sample the shadow map
+    float shadow_depth = texture(u_shadow_map, shadow_uv).r;
+
+    // In shadow if fragment is further from light than shadow map
+    return (real_depth > shadow_depth) ? 0.0 : 1.0;
+}
+
+void main()
+{
+    vec4 color = u_color * texture(u_texture, v_uv);
+    if (color.a < u_alpha_cutoff) discard;
+
+    float shadow = computeShadow(v_world_position);
+
+    // Darken fragment if in shadow
+    // NOTE: multiply each light contribution by shadow
+    // instead of multiplying the final color here
+    color.rgb *= shadow;
+
+    FragColor = color;
 }
