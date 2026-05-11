@@ -269,6 +269,8 @@ uniform int u_num_lights;
 uniform vec3 u_light_positions[10];
 uniform vec3 u_light_colors[10];
 uniform float u_light_intensities[10];
+uniform vec3 u_light_directions[10];
+uniform int u_light_types[10];
 
 out vec4 FragColor;
 
@@ -300,13 +302,46 @@ void main()
 	// Loop through lights
 	for(int i = 0; i < u_num_lights; i++)
 	{
-		// Light vector
-		vec3 L = u_light_positions[i] - v_world_position;
-		float dist = length(L);
-		L = normalize(L); // normalize after getting distance
+		// as we need to switch between light types, we will only initialize a few things
+		vec3 L;
+		float attenuation = 1.0;
+		
+		if(u_light_types[i] == 1) // Point light
+		{
+			vec3 L_vec = u_light_positions[i] - v_world_position;
+			float dist = length(L_vec);
+			L = normalize(L_vec); // normalize after getting distance
 
-		// Attenuation (Light intensity falls off with distance squared) Works only for point lights like that
-		float attenuation = 1.0 / (1.0 + dist * dist);
+			// Attenuation (Light intensity falls off with distance squared) Works only for point lights like that
+			attenuation = 1.0 / (1.0 + dist * dist);
+
+		}
+		else if(u_light_types[i] == 2) // Spot light
+		{
+			// THIS IS THE POINT LIGHT IMPLEMENTATION, WE NEED THIS TO BE DONE DIFFERENTLY FOR SPOT LIGHTS
+			// ONLY TO TEST RIGHT NOW
+
+			vec3 L_vec = u_light_positions[i] - v_world_position;
+			float dist = length(L_vec);
+			L = normalize(L_vec); // normalize after getting distance
+
+			// Attenuation (Light intensity falls off with distance squared) Works only for point lights like that
+			attenuation = 1.0 / (1.0 + dist * dist);
+
+		}
+		else if(u_light_types[i] == 3) // Directional light
+		{
+			// This looks correct while executed
+
+			// L is the direction towards the light source.
+			// We negate the light's front vector.
+			L = normalize(u_light_directions[i] * -1.0);
+
+			// Directional do not attenuate
+			attenuation = 1.0;
+		}
+
+
 		vec3 light_energy = u_light_colors[i] * u_light_intensities[i] * attenuation;
 
 		// Diffuse (Lambert)
