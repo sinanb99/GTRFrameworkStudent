@@ -297,6 +297,9 @@ void Renderer::renderMeshWithMaterial(const Matrix44 model, GFX::Mesh* mesh, SCN
 	std::vector<vec3> light_directions;
 	std::vector<int> light_types; // We know NO_LIGHT = 0, POINT = 1, SPOT = 2, DIRECTIONAL = 3. This has been set beforehand
 
+	// This is for the spot light, as we need to define the cones
+	std::vector<vec2> light_cones; // x: cos(inner), y: cos(outer)
+
 	// Here we fill the lists we just defined
 	for (LightEntity* light : lights_list) {
 		light_positions.push_back(light->root.getGlobalMatrix().getTranslation());		// Light positions
@@ -308,6 +311,10 @@ void Renderer::renderMeshWithMaterial(const Matrix44 model, GFX::Mesh* mesh, SCN
 
 		// Get the enum to int (Point 1, Spot = 2, Directional = 3)
 		light_types.push_back((int)light->light_type);
+
+		float cos_inner = cos(light->cone_info.x * DEG2RAD);
+		float cos_outer = cos(light->cone_info.y * DEG2RAD);
+		light_cones.push_back(vec2(cos_inner, cos_outer));
 	}
 
 	// upload the shader uniforms so we can use them in the shader.
@@ -320,6 +327,9 @@ void Renderer::renderMeshWithMaterial(const Matrix44 model, GFX::Mesh* mesh, SCN
 	// Different types for shader
 	shader->setUniform3Array("u_light_directions", (float*)light_directions.data(), light_directions.size()); //set directional information
 	shader->setUniform1Array("u_light_types", (int*)light_types.data(), light_types.size());
+
+	// For Spotlights, we set the uniform for the cones here
+	shader->setUniform2Array("u_light_cones", (float*)light_cones.data(), light_cones.size());
 
 
 	//upload uniforms
