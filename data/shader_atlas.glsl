@@ -309,7 +309,9 @@ vec3 perturbNormal(vec3 N, vec3 WP, vec2 uv, vec3 normal_pixel)
 void main()
 {
 	// We prepare the vectors for Phong - N, V
-	vec3 N = normalize(v_normal);								// Normal vector, so direction the surface is "facing"
+	vec3 N_geo = normalize(v_normal);								// Normal vector, so direction the surface is "facing"
+	vec3 N = N_geo
+	
 	if(u_has_normal_map)
 	{
 		// Get normal from texture (always 0 to 1 range)
@@ -395,7 +397,8 @@ void main()
 
 		// Diffuse (Lambert)
 		float NdotL = max(0.0, dot(N, L));
-		vec3 diffuse = NdotL * light_energy;
+		float NdotL_geo = max(0.0, dot(N_geo, L)); // Physical limit
+		vec3 diffuse = (NdotL * NdotL_geo) * light_energy;
 
 		// Specular (PHONG)
 		//spec_strenth controls intensity independent of shape, makes it less camera dependent
@@ -405,7 +408,7 @@ void main()
 		float spec_factor = pow(RdotV, shininess);
 
 		//multiplying base_color tints the color of the light 
-		vec3 specular = (NdotL > 0.0) ? (spec_factor * spec_strength * light_energy * base_color) : vec3(0.0);
+		vec3 specular = (NdotL_geo > 0.0) ? (spec_factor * spec_strength * light_energy * base_color) : vec3(0.0);
 
 
 		total_direct_light += (diffuse * base_color) + specular;
