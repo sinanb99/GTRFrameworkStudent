@@ -271,6 +271,7 @@ uniform vec3 u_light_colors[10];
 uniform float u_light_intensities[10];
 uniform vec3 u_light_directions[10];
 uniform int u_light_types[10];
+uniform vec2 u_light_cones[10];
 
 out vec4 FragColor;
 
@@ -314,20 +315,24 @@ void main()
 
 			// Attenuation (Light intensity falls off with distance squared) Works only for point lights like that
 			attenuation = 1.0 / (1.0 + dist * dist);
-
 		}
 		else if(u_light_types[i] == 2) // Spot light
 		{
-			// THIS IS THE POINT LIGHT IMPLEMENTATION, WE NEED THIS TO BE DONE DIFFERENTLY FOR SPOT LIGHTS
-			// ONLY TO TEST RIGHT NOW
-
+			// proper spotlight
 			vec3 L_vec = u_light_positions[i] - v_world_position;
 			float dist = length(L_vec);
-			L = normalize(L_vec); // normalize after getting distance
+			L = normalize(L_vec);
 
-			// Attenuation (Light intensity falls off with distance squared) Works only for point lights like that
+			// Distance falloff is the same as Point Light
 			attenuation = 1.0 / (1.0 + dist * dist);
 
+			// Cone Falloff
+			vec3 D = normalize(u_light_directions[i]);
+			float cos_angle = dot(D, L); //-L is the direction from Light to pixel
+
+			// Interpolate between inner and outer cone
+			float spot_factor = smoothstep(u_light_cones[i].y, u_light_cones[i].x, cos_angle);
+			attenuation *= spot_factor;
 		}
 		else if(u_light_types[i] == 3) // Directional light
 		{

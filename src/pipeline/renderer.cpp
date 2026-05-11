@@ -312,6 +312,7 @@ void Renderer::renderMeshWithMaterial(const Matrix44 model, GFX::Mesh* mesh, SCN
 		// Get the enum to int (Point 1, Spot = 2, Directional = 3)
 		light_types.push_back((int)light->light_type);
 
+		// Cos functions needed for the cone
 		float cos_inner = cos(light->cone_info.x * DEG2RAD);
 		float cos_outer = cos(light->cone_info.y * DEG2RAD);
 		light_cones.push_back(vec2(cos_inner, cos_outer));
@@ -341,7 +342,7 @@ void Renderer::renderMeshWithMaterial(const Matrix44 model, GFX::Mesh* mesh, SCN
 
 	// Upload time, for cool shader effects
 	float t = getTime();
-	shader->setUniform("u_time", t );
+	shader->setUniform("u_time", t);
 
 	// Render just the verticies as a wireframe
 	if (render_wireframe)
