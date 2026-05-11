@@ -59,6 +59,8 @@ std::vector<sRenderable> render_list; // render_list that includes everything th
 std::vector<sRenderable> opaque_list; // only not see through things
 std::vector<sRenderable> transparent_list; // See through things, ordered the other way around
 
+// Phong Lighting
+std::vector<LightEntity*> lights_list;
 
 /** * Recursively flattens the scene hierarchy into a linear render list.
  * Transforms local node coordinates into World Space for the GPU.

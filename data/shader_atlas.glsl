@@ -314,10 +314,15 @@ void main()
 		vec3 diffuse = NdotL * light_energy;
 
 		// Specular (PHONG)
+		//spec_strenth controls intensity independent of shape, makes it less camera dependent
+		float spec_strength = 1.0 - u_roughness;
 		vec3 R = reflect(-L, N);
 		float RdotV = max(0.0, dot(R, V));
 		float spec_factor = pow(RdotV, shininess);
-		vec3 specular = (NdotL > 0.0) ? (spec_factor * light_energy) : vec3(0.0);
+
+		//multiplying base_color tints the color of the light 
+		vec3 specular = (NdotL > 0.0) ? (spec_factor * spec_strength * light_energy * base_color) : vec3(0.0);
+
 
 		total_direct_light += (diffuse * base_color) + specular;
 	}
