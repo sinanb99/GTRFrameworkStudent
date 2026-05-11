@@ -293,18 +293,33 @@ void Renderer::renderMeshWithMaterial(const Matrix44 model, GFX::Mesh* mesh, SCN
 	std::vector<vec3> light_colors;			// This is the RGB values of the light that is emitted.
 	std::vector<float> light_intensities;	// Lightintensity as we know it.
 
+	// Here we initialize the new lists for the light types and direction
+	std::vector<vec3> light_directions;
+	std::vector<int> light_types; // We know NO_LIGHT = 0, POINT = 1, SPOT = 2, DIRECTIONAL = 3. This has been set beforehand
+
 	// Here we fill the lists we just defined
 	for (LightEntity* light : lights_list) {
 		light_positions.push_back(light->root.getGlobalMatrix().getTranslation());		// Light positions
 		light_colors.push_back(light->color);											// Light colors
 		light_intensities.push_back(light->intensity);									// Light intensity
+
+		// Directional and spot lights need the "front" vector aka direction the light is looking
+		light_directions.push_back(light->root.getGlobalMatrix().frontVector());
+
+		// Get the enum to int (Point 1, Spot = 2, Directional = 3)
+		light_types.push_back((int)light->light_type);
 	}
 
 	// upload the shader uniforms so we can use them in the shader.
+	// According to gemini it might be faster if we do this in renderScene instead of every Mesh. (keep in mind if we need better efficiency)
 	shader->setUniform("u_num_lights", (int)light_positions.size());										//set a uniform for the amount of lights existing
 	shader->setUniform3Array("u_light_positions", (float*)light_positions.data(), light_positions.size());  //set a uniform to access light positions
 	shader->setUniform3Array("u_light_colors", (float*)light_colors.data(), light_positions.size());		//set a uniform to access light colors 
 	shader->setUniform1Array("u_light_intensities", light_intensities.data(), light_positions.size());		//set a uniform to access light intensities
+	
+	// Different types for shader
+	shader->setUniform3Array("u_light_directions", (float*)light_directions.data(), light_directions.size()); //set directional information
+	shader->setUniform1Array("u_light_types", (int*)light_types.data(), light_types.size());
 
 
 	//upload uniforms
