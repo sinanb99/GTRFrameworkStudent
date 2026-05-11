@@ -310,7 +310,7 @@ void main()
 {
 	// We prepare the vectors for Phong - N, V
 	vec3 N_geo = normalize(v_normal);								// Normal vector, so direction the surface is "facing"
-	vec3 N = N_geo
+	vec3 N = N_geo;
 	
 	if(u_has_normal_map)
 	{
