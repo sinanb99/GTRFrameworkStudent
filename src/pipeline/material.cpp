@@ -88,7 +88,7 @@ void Material::bind(GFX::Shader* shader) {
 	   Now we need to swtich for the metallic_roughness, the normal map and else.
 	*/
 	{
-		GFX::Texture* texture = textures[SCN::eTextureChannel::ALBEDO].texture;
+		GFX::Texture* albedo_texture = textures[SCN::eTextureChannel::ALBEDO].texture;
 
 		// HERE =====================
 		// TODO: Expand rfor the rest of materials (when you need to)
@@ -99,13 +99,26 @@ void Material::bind(GFX::Shader* shader) {
 		// ==========================
 
 		// We always force a default albedo texture
-		if (texture == NULL)
-			texture = GFX::Texture::getWhiteTexture(); //a 1x1 white texture
+		if (albedo_texture == NULL)
+			albedo_texture = GFX::Texture::getWhiteTexture(); //a 1x1 white texture
 
+		if (albedo_texture)
+			shader->setUniform("u_texture", albedo_texture, 0);
+
+		// Get normal map texture
+		GFX::Texture* normal_texture = textures[SCN::eTextureChannel::NORMALMAP].texture;
+
+		// Boolean to check if normal map is used and give that to shader.
+		bool has_normal_map = (normal_texture != nullptr);
+		shader->setUniform("u_has_normal_map", has_normal_map);
+
+		// if there is a normal map, we set the normal texture.
+		if (has_normal_map) {
+			shader->setUniform("u_normal_texture", normal_texture, 1);
+		}
+
+		// Color after normal map
 		shader->setUniform("u_color", color);
-
-		if (texture)
-			shader->setUniform("u_texture", texture, 0);
 
 		// We are adding the roughness here and adding it as a uniform to send it to our shader (Assignment 2)
 		shader->setUniform("u_roughness", roughness_factor);

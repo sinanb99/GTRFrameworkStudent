@@ -273,12 +273,56 @@ uniform vec3 u_light_directions[10];
 uniform int u_light_types[10];
 uniform vec2 u_light_cones[10];
 
+// New Uniforms for normal mapping
+uniform sampler2D u_normal_texture;
+uniform bool u_has_normal_map;
+
 out vec4 FragColor;
+
+mat3 cotangent_frame(vec3 N, vec3 p, vec2 uv)
+{
+	// get edge vectors of the pixel triangle
+	vec3 dp1 = dFdx(p);
+	vec3 dp2 = dFdy(p);
+	vec2 duv1 = dFdx(uv);
+	vec2 duv2 = dFdy(uv);
+
+	// solve the linear system
+	vec3 dp2perp = cross(dp2, N);
+	vec3 dp1perp = cross(N, dp1);
+	vec3 T = dp2perp * duv1.x + dp1perp * duv2.x;
+	vec3 B = dp2perp * duv1.y + dp1perp * duv2.y;
+
+	// construct a scale-invariant frame 
+	float invmax = inversesqrt(max(dot(T, T), dot(B, B)));
+	return mat3(T * invmax, B * invmax, N);
+}
+
+// assume N, the interpolated vertex normal and 
+// WP the world position
+vec3 perturbNormal(vec3 N, vec3 WP, vec2 uv, vec3 normal_pixel)
+{
+	mat3 TBN = cotangent_frame(N, WP, uv);
+	return normalize(TBN * normal_pixel);
+}
 
 void main()
 {
 	// We prepare the vectors for Phong - N, V
 	vec3 N = normalize(v_normal);								// Normal vector, so direction the surface is "facing"
+	if(u_has_normal_map)
+	{
+		// Get normal from texture (always 0 to 1 range)
+		vec3 normal_pixel = texture(u_normal_texture, v_uv).xyz;
+
+		// Remap to -1 to 1 range
+		normal_pixel = normal_pixel * 2.0 - 1.0;
+
+		// Perturb the geometric normal_pixel
+		N = perturbNormal(v_normal, v_world_position, v_uv, normal_pixel);
+	}
+	
+	
 	vec3 V = normalize(u_camera_position - v_world_position);	// The direction from the pixel on the objects surface towards the camera.
 
 	// Get base texture color
@@ -328,7 +372,7 @@ void main()
 
 			// Cone Falloff
 			vec3 D = normalize(u_light_directions[i]);
-			float cos_angle = dot(D, L); //-L is the direction from Light to pixel
+			float cos_angle = dot(D, L); //L is the direction from Light to pixel
 
 			// Interpolate between inner and outer cone
 			float spot_factor = smoothstep(u_light_cones[i].y, u_light_cones[i].x, cos_angle);
