@@ -27,6 +27,7 @@ Renderer::Renderer(const char* shader_atlas_filename)
 {
 	render_wireframe = false;
 	render_boundaries = false;
+	render_mode = SINGLE_PASS; // Initialize it to single pass by default
 	scene = nullptr;
 	skybox_cubemap = nullptr;
 
@@ -368,7 +369,12 @@ void Renderer::showUI()
 	ImGui::Checkbox("Boundaries", &render_boundaries);
 
 	// This is where we implement the change from multi and single pass.
+	ImGui::Separator();
+	ImGui::Text("Render Mode");
 
+	// To change from Single to multi and vice versa
+	ImGui::RadioButton("Single Pass", &render_mode, SINGLE_PASS);
+	ImGui::RadioButton("Multi Pass", &render_mode, MULTI_PASS);
 }
 
 #else
