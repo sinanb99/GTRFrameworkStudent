@@ -56,6 +56,11 @@ void Material::Release()
 	sMaterials.clear();
 }
 
+// Transparency checker for Assignment 1
+bool Material::isTransparent() const {
+	return alpha_mode == SCN::eAlphaMode::BLEND;
+}
+
 void Material::bind(GFX::Shader* shader) {
 	// First, configure the OpenGL state with the material settings =======================
 	{
@@ -79,9 +84,16 @@ void Material::bind(GFX::Shader* shader) {
 	}
 
 	// Bind the textures and set uniforms =======================
+	/* Before implementing Assignment 2, we are computing every texture with ALBEDO.
+	   Now we need to swtich for the metallic_roughness, the normal map and else.
+	*/
 	{
+<<<<<<< HEAD
 		GFX::Texture* albedo_tex = textures[SCN::eTextureChannel::ALBEDO].texture;
 
+=======
+		GFX::Texture* albedo_texture = textures[SCN::eTextureChannel::ALBEDO].texture;
+>>>>>>> origin/main
 
 		// HERE =====================
 		// TODO: Expand rfor the rest of materials (when you need to)
@@ -92,6 +104,7 @@ void Material::bind(GFX::Shader* shader) {
 		// ==========================
 
 		// We always force a default albedo texture
+<<<<<<< HEAD
 		if (albedo_tex == NULL)
 			albedo_tex = GFX::Texture::getWhiteTexture(); //a 1x1 white texture
 		shader->setUniform("u_texture", albedo_tex, 0);
@@ -111,6 +124,31 @@ void Material::bind(GFX::Shader* shader) {
 		else {
 			shader->setUniform("u_use_normal_map", 0);
 		}
+=======
+		if (albedo_texture == NULL)
+			albedo_texture = GFX::Texture::getWhiteTexture(); //a 1x1 white texture
+
+		if (albedo_texture)
+			shader->setUniform("u_texture", albedo_texture, 0);
+
+		// Get normal map texture
+		GFX::Texture* normal_texture = textures[SCN::eTextureChannel::NORMALMAP].texture;
+
+		// Boolean to check if normal map is used and give that to shader.
+		bool has_normal_map = (normal_texture != nullptr);
+		shader->setUniform("u_has_normal_map", has_normal_map);
+
+		// if there is a normal map, we set the normal texture.
+		if (has_normal_map) {
+			shader->setUniform("u_normal_texture", normal_texture, 1);
+		}
+
+		// Color after normal map
+		shader->setUniform("u_color", color);
+
+		// We are adding the roughness here and adding it as a uniform to send it to our shader (Assignment 2)
+		shader->setUniform("u_roughness", roughness_factor);
+>>>>>>> origin/main
 
 		// This is used to say which is the alpha threshold to what we should not paint a pixel on the screen (to cut polygons according to texture alpha)
 		shader->setUniform("u_alpha_cutoff", alpha_mode == SCN::eAlphaMode::MASK ? alpha_cutoff : 0.001f);

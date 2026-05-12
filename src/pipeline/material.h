@@ -67,6 +67,9 @@ namespace SCN {
 		//textures
 		Sampler textures[eTextureChannel::ALL];
 
+		//Transparency checker for Render Lists // Assignment 1
+		bool isTransparent() const;
+
 		//ctors
 		Material() : alpha_mode(NO_ALPHA), alpha_cutoff(0.5), color(1, 1, 1, 1), two_sided(false), roughness_factor(1), metallic_factor(0) {
 			//color_texture = emissive_texture = metallic_roughness_texture = occlusion_texture = normal_texture = NULL;

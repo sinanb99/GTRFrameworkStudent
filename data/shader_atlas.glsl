@@ -5,8 +5,12 @@ skybox basic.vs skybox.fs
 depth quad.vs depth.fs
 lighting basic.vs lighting.fs
 multi basic.vs multi.fs
+<<<<<<< HEAD
 shadow basic.vs shadow.fs
 plain basic.vs plain.fs
+=======
+lighting basic.vs lighting.fs
+>>>>>>> origin/main
 
 \perturbNormal
 // From https://github.com/glslify/glsl-perturb-normal/blob/master/cotangent-frame.glsl
@@ -247,16 +251,25 @@ void main()
 	gl_Position = u_viewprojection * vec4( v_world_position, 1.0 );
 }
 
+<<<<<<< HEAD
 
 \lighting.fs
 #version 330 core
 
 #define MAX_LIGHTS 5
 
+=======
+\lighting.fs
+
+#version 330 core
+
+// From basic.vs
+>>>>>>> origin/main
 in vec3 v_world_position;
 in vec3 v_normal;
 in vec2 v_uv;
 
+<<<<<<< HEAD
 uniform vec4 u_color;
 uniform sampler2D u_texture;
 uniform vec3 u_camera_position;
@@ -466,10 +479,62 @@ float computeShadow(vec3 world_pos)
 
     // In shadow if fragment is further from light than shadow map
     return (real_depth > shadow_depth) ? 0.0 : 1.0;
+=======
+// Material uniforms
+uniform vec4 u_color;
+uniform sampler2D u_texture;
+uniform float u_roughness;
+uniform float u_alpha_cutoff;
+
+// Camera uniform
+uniform vec3 u_camera_position;
+
+// Light Uniforms we just set for Assignment 2
+uniform int u_num_lights;
+uniform vec3 u_light_positions[10];
+uniform vec3 u_light_colors[10];
+uniform float u_light_intensities[10];
+uniform vec3 u_light_directions[10];
+uniform int u_light_types[10];
+uniform vec2 u_light_cones[10];
+
+// New Uniforms for normal mapping
+uniform sampler2D u_normal_texture;
+uniform bool u_has_normal_map;
+
+out vec4 FragColor;
+
+mat3 cotangent_frame(vec3 N, vec3 p, vec2 uv)
+{
+	// get edge vectors of the pixel triangle
+	vec3 dp1 = dFdx(p);
+	vec3 dp2 = dFdy(p);
+	vec2 duv1 = dFdx(uv);
+	vec2 duv2 = dFdy(uv);
+
+	// solve the linear system
+	vec3 dp2perp = cross(dp2, N);
+	vec3 dp1perp = cross(N, dp1);
+	vec3 T = dp2perp * duv1.x + dp1perp * duv2.x;
+	vec3 B = dp2perp * duv1.y + dp1perp * duv2.y;
+
+	// construct a scale-invariant frame 
+	float invmax = inversesqrt(max(dot(T, T), dot(B, B)));
+	return mat3(T * invmax, B * invmax, N);
+}
+
+// assume N, the interpolated vertex normal and 
+// WP the world position
+vec3 perturbNormal(vec3 N, vec3 WP, vec2 uv, vec3 normal_pixel)
+{
+	mat3 TBN = cotangent_frame(N, WP, uv);
+	return normalize(TBN * normal_pixel);
+>>>>>>> origin/main
 }
 
 void main()
 {
+<<<<<<< HEAD
     vec4 color = u_color * texture(u_texture, v_uv);
     if (color.a < u_alpha_cutoff) discard;
 
@@ -491,4 +556,114 @@ out vec4 FragColor;
 
 void main(){
 FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+=======
+	// We prepare the vectors for Phong - N, V
+	vec3 N_geo = normalize(v_normal);								// Normal vector, so direction the surface is "facing"
+	vec3 N = N_geo;
+	
+	if(u_has_normal_map)
+	{
+		// Get normal from texture (always 0 to 1 range)
+		vec3 normal_pixel = texture(u_normal_texture, v_uv).xyz;
+
+		// Remap to -1 to 1 range
+		normal_pixel = normal_pixel * 2.0 - 1.0;
+
+		// Perturb the geometric normal_pixel
+		N = perturbNormal(v_normal, v_world_position, v_uv, normal_pixel);
+	}
+	
+	
+	vec3 V = normalize(u_camera_position - v_world_position);	// The direction from the pixel on the objects surface towards the camera.
+
+	// Get base texture color
+	vec4 tex_color = texture(u_texture, v_uv);					// Getting color of the texture
+	vec3 base_color = u_color.rgb * tex_color.rgb;				// calculating base color
+
+	// Alpha test (from Assignment 1)
+	if(u_color.a * tex_color.a < u_alpha_cutoff)
+		discard;
+
+	// Ambient component 
+	vec3 ambient = base_color * 0.1; // 0.1 is adjustable but used for a low light.
+
+	// Accumulator for direct light
+	vec3 total_direct_light = vec3(0.0);
+
+	// Calculate Phong Shininess from Roughness
+	// High roughness (1.0) -> low power (dull)
+	// low roughness (0.0) -> high power (shiny)
+	float shininess = pow(2.0, (1.0 - u_roughness) * 10.0);
+
+	// Loop through lights
+	for(int i = 0; i < u_num_lights; i++)
+	{
+		// as we need to switch between light types, we will only initialize a few things
+		vec3 L;
+		float attenuation = 1.0;
+		
+		if(u_light_types[i] == 1) // Point light
+		{
+			vec3 L_vec = u_light_positions[i] - v_world_position;
+			float dist = length(L_vec);
+			L = normalize(L_vec); // normalize after getting distance
+
+			// Attenuation (Light intensity falls off with distance squared) Works only for point lights like that
+			attenuation = 1.0 / (1.0 + dist * dist);
+		}
+		else if(u_light_types[i] == 2) // Spot light
+		{
+			// proper spotlight
+			vec3 L_vec = u_light_positions[i] - v_world_position;
+			float dist = length(L_vec);
+			L = normalize(L_vec);
+
+			// Distance falloff is the same as Point Light
+			attenuation = 1.0 / (1.0 + dist * dist);
+
+			// Cone Falloff
+			vec3 D = normalize(u_light_directions[i]);
+			float cos_angle = dot(D, L); //L is the direction from Light to pixel
+
+			// Interpolate between inner and outer cone
+			float spot_factor = smoothstep(u_light_cones[i].y, u_light_cones[i].x, cos_angle);
+			attenuation *= spot_factor;
+		}
+		else if(u_light_types[i] == 3) // Directional light
+		{
+			// This looks correct while executed
+
+			// L is the direction towards the light source.
+			// We negate the light's front vector.
+			L = normalize(u_light_directions[i] * -1.0);
+
+			// Directional do not attenuate
+			attenuation = 1.0;
+		}
+
+
+		vec3 light_energy = u_light_colors[i] * u_light_intensities[i] * attenuation;
+
+		// Diffuse (Lambert)
+		float NdotL = max(0.0, dot(N, L));
+		float NdotL_geo = max(0.0, dot(N_geo, L)); // Physical limit
+		vec3 diffuse = (NdotL * NdotL_geo) * light_energy;
+
+		// Specular (PHONG)
+		//spec_strenth controls intensity independent of shape, makes it less camera dependent
+		float spec_strength = 1.0 - u_roughness;
+		vec3 R = reflect(-L, N);
+		float RdotV = max(0.0, dot(R, V));
+		float spec_factor = pow(RdotV, shininess);
+
+		//multiplying base_color tints the color of the light 
+		vec3 specular = (NdotL_geo > 0.0) ? (spec_factor * spec_strength * light_energy * base_color) : vec3(0.0);
+
+
+		total_direct_light += (diffuse * base_color) + specular;
+	}
+
+	// Final Color
+	FragColor = vec4(ambient + total_direct_light, u_color.a * tex_color.a);
+>>>>>>> origin/main
 }
