@@ -18,6 +18,12 @@ namespace SCN {
 	class Prefab;
 	class Material;
 
+	// For the switch between multi and single pass:
+	enum eRenderMode {
+		SINGLE_PASS,
+		MULTI_PASS
+	};
+
 	// This class is in charge of rendering anything in our system.
 	// Separating the render from anything else makes the code cleaner
 	class Renderer
@@ -25,6 +31,9 @@ namespace SCN {
 	public:
 		bool render_wireframe;
 		bool render_boundaries;
+
+		// This is added to decide what mode we are using (0 for Single, 1 for Multi)
+		int render_mode;
 
 		GFX::Texture* skybox_cubemap;
 

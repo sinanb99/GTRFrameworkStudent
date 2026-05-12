@@ -367,8 +367,8 @@ void Renderer::showUI()
 	ImGui::Checkbox("Wireframe", &render_wireframe);
 	ImGui::Checkbox("Boundaries", &render_boundaries);
 
-	//add here your stuff
-	//...
+	// This is where we implement the change from multi and single pass.
+
 }
 
 #else
