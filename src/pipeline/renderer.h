@@ -47,6 +47,8 @@ namespace SCN {
 		//just to be sure we have everything ready for the rendering
 		void setupScene();
 
+		void uploadLights(GFX::Shader* shader, const std::vector<LightEntity*>& light);
+
 		//add here your functions
 		//...
 

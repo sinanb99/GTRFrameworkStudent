@@ -259,6 +259,59 @@ void Renderer::renderSkybox(GFX::Texture* cubemap)
 	glEnable(GL_DEPTH_TEST);
 }
 
+// We create a private helper function for our lights to use in both single and multipass
+void Renderer::uploadLights(GFX::Shader* shader, const std::vector<LightEntity*>& lights)
+{
+
+	/*
+	* We initialize all our lists.
+	* positions: position of the light
+	* colors: color information in RGB of our lights
+	* directions: frontvectors, so where our light is looking at
+	* intensities: How strong is our light?
+	* types: 0 for No light, 1 for Point Light, 2 for Spot Light, 3 for Directional Light
+	* cones: we initialize a cone for our Spotlight.
+	*/
+	std::vector<vec3> positions, colors, directions; //
+	std::vector<float> intensities;
+	std::vector<int> types;
+	std::vector<vec2> cones;
+
+
+	/*
+	* We initialize all our lists that are declared above.
+	*/
+	for (LightEntity* light : lights) {
+		positions.push_back(light->root.getGlobalMatrix().getTranslation());
+		colors.push_back(light->color);
+		intensities.push_back(light->intensity);
+		directions.push_back(light->root.getGlobalMatrix().frontVector());
+		types.push_back((int)light->light_type);
+
+		// Initialize cone of our spotlight
+		float cos_inner = cos(light->cone_info.x * DEG2RAD);
+		float cos_outer = cos(light->cone_info.y * DEG2RAD);
+		cones.push_back(vec2(cos_inner, cos_outer));
+	}
+
+
+	// upload the shader uniforms so we can use them in the shader.
+	// According to gemini it might be faster if we do this in renderScene instead of every Mesh. (keep in mind if we need better efficiency)
+	shader->setUniform("u_num_lights", (int)positions.size());										//set a uniform for the amount of lights existing
+	shader->setUniform3Array("u_light_positions", (float*)positions.data(), positions.size());  //set a uniform to access light positions
+	shader->setUniform3Array("u_light_colors", (float*)colors.data(), positions.size());		//set a uniform to access light colors 
+	shader->setUniform1Array("u_light_intensities", intensities.data(), positions.size());		//set a uniform to access light intensities
+
+	// Different types for shader
+	shader->setUniform3Array("u_light_directions", (float*)directions.data(), directions.size()); //set directional information
+	shader->setUniform1Array("u_light_types", (int*)types.data(), types.size());
+
+	// For Spotlights, we set the uniform for the cones here
+	shader->setUniform2Array("u_light_cones", (float*)cones.data(), cones.size());
+
+}
+
+
 // Renders a mesh given its transform and material
 void Renderer::renderMeshWithMaterial(const Matrix44 model, GFX::Mesh* mesh, SCN::Material* material)
 {
@@ -289,51 +342,8 @@ void Renderer::renderMeshWithMaterial(const Matrix44 model, GFX::Mesh* mesh, SCN
 
 	material->bind(shader);
 
-	// We are preparing our color, and intensities from the shader.
-	std::vector<vec3> light_positions;		// This gives us the position of the lights
-	std::vector<vec3> light_colors;			// This is the RGB values of the light that is emitted.
-	std::vector<float> light_intensities;	// Lightintensity as we know it.
-
-	// Here we initialize the new lists for the light types and direction
-	std::vector<vec3> light_directions;
-	std::vector<int> light_types; // We know NO_LIGHT = 0, POINT = 1, SPOT = 2, DIRECTIONAL = 3. This has been set beforehand
-
-	// This is for the spot light, as we need to define the cones
-	std::vector<vec2> light_cones; // x: cos(inner), y: cos(outer)
-
-	// Here we fill the lists we just defined
-	for (LightEntity* light : lights_list) {
-		light_positions.push_back(light->root.getGlobalMatrix().getTranslation());		// Light positions
-		light_colors.push_back(light->color);											// Light colors
-		light_intensities.push_back(light->intensity);									// Light intensity
-
-		// Directional and spot lights need the "front" vector aka direction the light is looking
-		light_directions.push_back(light->root.getGlobalMatrix().frontVector());
-
-		// Get the enum to int (Point 1, Spot = 2, Directional = 3)
-		light_types.push_back((int)light->light_type);
-
-		// Cos functions needed for the cone
-		float cos_inner = cos(light->cone_info.x * DEG2RAD);
-		float cos_outer = cos(light->cone_info.y * DEG2RAD);
-		light_cones.push_back(vec2(cos_inner, cos_outer));
-	}
-
-	// upload the shader uniforms so we can use them in the shader.
-	// According to gemini it might be faster if we do this in renderScene instead of every Mesh. (keep in mind if we need better efficiency)
-	shader->setUniform("u_num_lights", (int)light_positions.size());										//set a uniform for the amount of lights existing
-	shader->setUniform3Array("u_light_positions", (float*)light_positions.data(), light_positions.size());  //set a uniform to access light positions
-	shader->setUniform3Array("u_light_colors", (float*)light_colors.data(), light_positions.size());		//set a uniform to access light colors 
-	shader->setUniform1Array("u_light_intensities", light_intensities.data(), light_positions.size());		//set a uniform to access light intensities
+	// We split for the single and multi-pass but first we need to set the common uniforms:
 	
-	// Different types for shader
-	shader->setUniform3Array("u_light_directions", (float*)light_directions.data(), light_directions.size()); //set directional information
-	shader->setUniform1Array("u_light_types", (int*)light_types.data(), light_types.size());
-
-	// For Spotlights, we set the uniform for the cones here
-	shader->setUniform2Array("u_light_cones", (float*)light_cones.data(), light_cones.size());
-
-
 	//upload uniforms
 	shader->setUniform("u_model", model);
 
@@ -347,7 +357,9 @@ void Renderer::renderMeshWithMaterial(const Matrix44 model, GFX::Mesh* mesh, SCN
 
 	// Render just the verticies as a wireframe
 	if (render_wireframe)
-		glPolygonMode( GL_FRONT_AND_BACK, GL_LINE );
+		glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+
+	uploadLights(shader, lights_list);
 
 	//do the draw call that renders the mesh into the screen
 	mesh->render(GL_TRIANGLES);
