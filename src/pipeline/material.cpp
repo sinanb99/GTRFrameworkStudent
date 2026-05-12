@@ -117,6 +117,9 @@ void Material::bind(GFX::Shader* shader) {
 			shader->setUniform("u_normal_texture", normal_texture, 1);
 		}
 
+		// Pass shininess value to the shader
+		shader->setUniform("u_shininess", shininess);
+
 		// Color after normal map
 		shader->setUniform("u_color", color);
 

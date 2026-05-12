@@ -64,6 +64,8 @@ namespace SCN {
 		float metallic_factor;	//how metallic is the surface
 		Vector3f emissive_factor;//does this object emit light?
 
+		float shininess; // We are adding a shininess property.
+
 		//textures
 		Sampler textures[eTextureChannel::ALL];
 
@@ -73,6 +75,7 @@ namespace SCN {
 		//ctors
 		Material() : alpha_mode(NO_ALPHA), alpha_cutoff(0.5), color(1, 1, 1, 1), two_sided(false), roughness_factor(1), metallic_factor(0) {
 			//color_texture = emissive_texture = metallic_roughness_texture = occlusion_texture = normal_texture = NULL;
+			this->shininess = pow(2.0f, (1.0f - roughness_factor) * 10.0f);
 			index = s_last_index++;
 		}
 		virtual ~Material();
