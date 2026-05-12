@@ -359,6 +359,7 @@ void Renderer::renderMeshWithMaterial(const Matrix44 model, GFX::Mesh* mesh, SCN
 	if (render_wireframe)
 		glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
 
+	// We don't even need Multi-pass so we will let it stay like this.
 	uploadLights(shader, lights_list);
 
 	//do the draw call that renders the mesh into the screen
