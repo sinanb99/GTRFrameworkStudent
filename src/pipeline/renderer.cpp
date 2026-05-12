@@ -74,12 +74,6 @@ Renderer::Renderer(const char* shader_atlas_filename)
 	sphere.createSphere(1.0f);
 	sphere.uploadToVRAM();
 
-	// Shadow map init — add at end of Renderer constructor
-	shadow_fbo = nullptr;
-	light_camera = nullptr;
-	shadow_bias = 0.005f;
-	shadow_front_face_culling = false;
-	shadow_light_index = 0;
 	// 3.1 — Depth-only FBO, 1024x1024
 	shadow_fbo = new GFX::FBO();
 	shadow_fbo->setDepthOnly(1024, 1024);
@@ -483,6 +477,62 @@ void Renderer::showUI()
 
 void Renderer::renderShadowMap(SCN::Scene* scene)
 {
+
+	// Find the shadow-casting light by index
+	LightEntity* light = nullptr;
+	int found = 0;
+	for (BaseEntity* e : scene->entities) {
+		if (e->getType() == eEntityType::LIGHT) {
+			if (found == shadow_light_index) { light = (LightEntity*)e; break; }
+			found++;
+		}
+	}
+	if (!light || !light->cast_shadows) return;
+
+	//Light camera set up
+	mat4 light_model = light->root.getGlobalMatrix();
+	vec3 light_pos = light_model.getTranslation();
+	Vector3f light_front = light_model.frontVector().normalize();
+	Vector3f light_up = Vector3f(0, 1, 0);
+	if (fabs(light_front.dot(light_up)) > 0.99f)
+		light_up = Vector3f(0, 0, 1); // avoid gimbal lock
+
+	light_camera->lookAt(light_pos, light_pos + light_front, light_up);
+
+	if (light->light_type == eLightType::DIRECTIONAL) {
+		float area = light->area / 2.0f;
+		light_camera->setOrthographic(-area, area, -area, area,
+			light->near_distance, light->max_distance);
+	}
+
+	light_camera->updateViewMatrix();
+	light_camera->updateProjectionMatrix();
+
+	light_viewprojection = light_camera->viewprojection_matrix;
+
+	//Rendering
+	shadow_fbo->bind();
+	glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+	glClear(GL_DEPTH_BUFFER_BIT);
+
+	GFX::Shader* shader = GFX::Shader::Get("plain");
+	shader->enable();
+	shader->setUniform("u_viewprojection", light_viewprojection);
+	for (sRenderable& r : opaque_list) {
+		if (!r.mesh || !r.material) continue;
+		if (r.material->alpha_mode == SCN::eAlphaMode::BLEND) continue;
+		shader->setUniform("u_model", r.model);
+		r.mesh->render(GL_TRIANGLES);
+	}
+	shader->disable();
+
+
+	glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+
+	shadow_fbo->unbind();
+}
+	
+	/*
 	// Find the shadow-casting light by index
 	LightEntity* light = nullptr;
 	int found = 0;
@@ -551,6 +601,7 @@ void Renderer::renderShadowMap(SCN::Scene* scene)
 	glDisable(GL_CULL_FACE);
 	shadow_fbo->unbind();
 }
+*/
 #else
 void Renderer::showUI() {}
 #endif

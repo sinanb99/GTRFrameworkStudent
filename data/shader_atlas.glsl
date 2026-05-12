@@ -6,6 +6,7 @@ depth quad.vs depth.fs
 lighting basic.vs lighting.fs
 multi basic.vs multi.fs
 shadow basic.vs shadow.fs
+plain basic.vs plain.fs
 
 \perturbNormal
 // From https://github.com/glslify/glsl-perturb-normal/blob/master/cotangent-frame.glsl
@@ -480,4 +481,14 @@ void main()
     color.rgb *= shadow;
 
     FragColor = color;
+}
+
+\plain.fs
+
+#version 330 core
+
+out vec4 FragColor;
+
+void main(){
+FragColor = vec4(0.0, 0.0, 0.0, 1.0);
 }
