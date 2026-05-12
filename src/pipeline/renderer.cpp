@@ -2,6 +2,11 @@
 
 #include <algorithm> //sort
 
+#include <vector>
+#include <cmath>
+#include <string>
+
+
 #include "camera.h"
 #include "../gfx/gfx.h"
 #include "../gfx/shader.h"
@@ -14,7 +19,6 @@
 #include "../utils/utils.h"
 #include "../extra/hdre.h"
 #include "../core/ui.h"
-
 #include "scene.h"
 
 
@@ -374,22 +378,68 @@ void Renderer::renderMeshWithMaterial(const Matrix44 model, GFX::Mesh* mesh, SCN
 }
 
 #ifndef SKIP_IMGUI
-
 void Renderer::showUI()
 {
-		
+	// 1. Basic Checkboxes
 	ImGui::Checkbox("Wireframe", &render_wireframe);
 	ImGui::Checkbox("Boundaries", &render_boundaries);
 
-	// This is where we implement the change from multi and single pass.
+	SCN::Material* mat = nullptr;
+
+	// 2. Selection Logic
+	if (SCN::Node::s_selected && SCN::Node::s_selected->material) {
+		mat = SCN::Node::s_selected->material;
+	}
+	else if (SCN::BaseEntity::s_selected && SCN::BaseEntity::s_selected->getType() == SCN::eEntityType::PREFAB) {
+		SCN::PrefabEntity* pref = (SCN::PrefabEntity*)SCN::BaseEntity::s_selected;
+
+		// Recursive search for the first material in the tree
+		std::vector<SCN::Node*> nodes_to_check;
+		nodes_to_check.push_back(&(pref->root));
+
+		while (!nodes_to_check.empty()) {
+			SCN::Node* current = nodes_to_check.back();
+			nodes_to_check.pop_back();
+
+			if (current->material) {
+				mat = current->material;
+				break;
+			}
+
+			for (SCN::Node* child : current->children) {
+				nodes_to_check.push_back(child);
+			}
+		}
+	}
+
+	// 3. Drawing the UI
 	ImGui::Separator();
-	ImGui::Text("Render Mode");
+	if (mat) {
 
-	// To change from Single to multi and vice versa
-	ImGui::RadioButton("Single Pass", &render_mode, SINGLE_PASS);
-	ImGui::RadioButton("Multi Pass", &render_mode, MULTI_PASS);
+		if (mat->shininess <= 1.0f) {
+			mat->shininess = pow(2.0f, (1.0f - mat->roughness_factor) * 10.0f);
+		}
+
+		// Use a persistent ID for the Tree
+		if (ImGui::TreeNodeEx((void*)(intptr_t)mat->index, ImGuiTreeNodeFlags_DefaultOpen, "Material: %s", mat->name.empty() ? "unnamed" : mat->name.c_str()))
+		{
+			// Link Roughness to Shininess
+			if (ImGui::SliderFloat("Roughness", &mat->roughness_factor, 0.0f, 1.0f)) {
+				mat->shininess = pow(2.0f, (1.0f - mat->roughness_factor) * 10.0f);
+			}
+
+			// Link Shininess to Roughness
+			if (ImGui::SliderFloat("Phong Shininess", &mat->shininess, 1.0f, 1024.0f, "%.1f", ImGuiSliderFlags_Logarithmic)) {
+				mat->roughness_factor = 1.0f - (log2(mat->shininess) / 10.0f);
+			}
+
+			ImGui::TreePop();
+		}
+	}
+	else {
+		ImGui::TextDisabled("(No material found in selection)");
+	}
 }
-
 #else
 void Renderer::showUI() {}
 #endif

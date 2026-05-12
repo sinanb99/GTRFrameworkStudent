@@ -277,6 +277,9 @@ uniform vec2 u_light_cones[10];
 uniform sampler2D u_normal_texture;
 uniform bool u_has_normal_map;
 
+// Updating the shininess here
+uniform float u_shininess;
+
 out vec4 FragColor;
 
 mat3 cotangent_frame(vec3 N, vec3 p, vec2 uv)
@@ -344,7 +347,7 @@ void main()
 	// Calculate Phong Shininess from Roughness
 	// High roughness (1.0) -> low power (dull)
 	// low roughness (0.0) -> high power (shiny)
-	float shininess = pow(2.0, (1.0 - u_roughness) * 10.0);
+	// float shininess = pow(2.0, (1.0 - u_roughness) * 10.0);
 
 	// Loop through lights
 	for(int i = 0; i < u_num_lights; i++)
@@ -405,11 +408,12 @@ void main()
 		float spec_strength = 1.0 - u_roughness;
 		vec3 R = reflect(-L, N);
 		float RdotV = max(0.0, dot(R, V));
-		float spec_factor = pow(RdotV, shininess);
+		float spec_factor = pow(RdotV, u_shininess);
 
 		//multiplying base_color tints the color of the light 
-		vec3 specular = (NdotL_geo > 0.0) ? (spec_factor * spec_strength * light_energy * base_color) : vec3(0.0);
+		//vec3 specular = (NdotL_geo > 0.0) ? (spec_factor * spec_strength * light_energy * base_color) : vec3(0.0);
 
+		vec3 specular = (NdotL_geo > 0.0) ? (spec_factor * spec_strength * light_energy) : vec3(0.0);
 
 		total_direct_light += (diffuse * base_color) + specular;
 	}
