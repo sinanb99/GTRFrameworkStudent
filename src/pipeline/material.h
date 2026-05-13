@@ -81,6 +81,5 @@ namespace SCN {
 
 		static void Release();
 
-		bool isTransparent() const;
 	};
 };

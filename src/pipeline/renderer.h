@@ -30,7 +30,6 @@ namespace SCN {
 
 		SCN::Scene* scene;
 
-<<<<<<< HEAD
 		// Shadow map resources
 		GFX::FBO* shadow_fbo = nullptr;
 		Camera* light_camera = nullptr;
@@ -41,9 +40,7 @@ namespace SCN {
 
 		// And declare the method:
 		void renderShadowMap(SCN::Scene* scene);
-=======
 		std::vector<SCN::LightEntity*> lights_list; // We create a list of lights, so we can work through all the lights we get (Need to be a lightentity obviously)
->>>>>>> origin/main
 
 		//updated every frame
 		Renderer(const char* shaders_atlas_filename);

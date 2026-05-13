@@ -74,6 +74,8 @@ Renderer::Renderer(const char* shader_atlas_filename)
 	sphere.createSphere(1.0f);
 	sphere.uploadToVRAM();
 
+	shadow_light_index = 1;
+
 	// 3.1 — Depth-only FBO, 1024x1024
 	shadow_fbo = new GFX::FBO();
 	shadow_fbo->setDepthOnly(1024, 1024);
@@ -88,75 +90,7 @@ void Renderer::setupScene()
 		skybox_cubemap = nullptr;
 }
 
-<<<<<<< HEAD
-// Also from class
-struct sRenderable
-{
-	GFX::Mesh* mesh;
-	SCN::Material* material;
-	Matrix44 model;
-	float distance;
-};
 
-std::vector<sRenderable> render_list;
-std::vector<sRenderable> opaque_list;
-std::vector<sRenderable> transparent_list;
-
-// Phong Lighting
-std::vector<LightEntity*> lights_list;
-
-//To include children and partial rendering!
-void addSubtree(Node* node) {
-	if (!node) return;
-	render_list.push_back({
-		.mesh = node->mesh,
-		.material = node->material,
-		.model = node->getGlobalMatrix()
-		});
-	for (Node* child : node->children) addSubtree(child);
-}
-void parseNode(Node* node, Camera* cam) {
-	if (!node) {
-		return;
-	}
-
-	if (node->mesh) {
-		BoundingBox center = transformBoundingBox(node->getGlobalMatrix(), node->mesh->box);
-		char res = cam->testBoxInFrustum(center.center, center.halfsize);
-		if (res == CLIP_OUTSIDE) {
-			return;
-		}
-		else if (res == CLIP_INSIDE) {
-			addSubtree(node);
-			return;
-		}
-	}
-
-
-	// Push back is a very handy way to initialize structures and opjects
-	render_list.push_back({
-		.mesh = node->mesh,
-		.material = node->material,
-		.model = node->getGlobalMatrix()
-		});
-
-
-	for (Node* child : node->children) {
-		parseNode(child, cam);
-	}
-}
-
-
-void Renderer::parseSceneEntities(SCN::Scene* scene, Camera* cam) {
-	// HERE =====================
-	// TODO: GENERATE RENDERABLES
-	// ==========================
-	render_list.clear();
-	opaque_list.clear();
-	transparent_list.clear();
-	lights_list.clear();
-
-=======
 // This is our struct that describes the renderables. 
 struct sRenderable
 {
@@ -165,7 +99,6 @@ struct sRenderable
 	Matrix44 model; // The transfomration to move from object space to world space
 	float distance; // If the material is see-through, we must order by distance. (Z-Direction)
 };
->>>>>>> origin/main
 
 std::vector<sRenderable> render_list; // render_list that includes everything that is to be rendered.
 std::vector<sRenderable> opaque_list; // only not see through things
@@ -230,66 +163,14 @@ void Renderer::parseSceneEntities(SCN::Scene* scene, Camera* cam) {
 			continue;
 		}
 
-<<<<<<< HEAD
-		// From Class!!
-		if (entity->getType() == eEntityType::PREFAB) {
-			//
-=======
+
 		// If the entity is a Prefab, cast it and traverse its internal scene graph for rendering. 
 		if (entity->getType() == eEntityType::PREFAB) {
 
->>>>>>> origin/main
 			PrefabEntity* e = (PrefabEntity*)entity;
 
 			parseNode(&(entity->root), cam);
 
-<<<<<<< HEAD
-			// Implement transparency here???
-		}
-
-		if (entity->getType() == eEntityType::LIGHT) {
-			LightEntity* l = (LightEntity*)entity;
-
-			// parseNode(&(entity->root), cam)
-			lights_list.push_back(l);
-		}
-
-
-		// Store Prefab Entitys
-		// ...
-		//		Store Children Prefab Entities
-
-		// Store Lights
-		// ...
-	}
-
-	// another for loop to implement our transprant and opaque lists.
-	for (sRenderable& r : render_list) {
-		// compute distance from camera to object using model translation
-		if (cam)
-			r.distance = r.model.getTranslation().distance(cam->eye);
-		else
-			r.distance = 0.0f;
-
-		// ALPHA cutout as opaque and BLEND as transparent
-		// If it is transparent, add it to transparent list, else opaque
-		if (r.material && r.material->isTransparent())
-			transparent_list.push_back(r);
-		else
-			opaque_list.push_back(r);
-	}
-
-
-	// Debug for whether Lights are perceived correctly.
-	// std::cout << "lights_list=" << lights_list.size() << std::endl;
-
-	// Debug for what is rendering
-	// std::cout << "render_list=" << render_list.size() << " opaque=" << opaque_list.size() << " transparent=" << transparent_list.size() << std::endl;
-
-}
-
-
-=======
 		}
 
 		// Here we get the lights list, we do it just like the PREFABs -> Now we can work with the lights list.
@@ -328,27 +209,22 @@ void Renderer::parseSceneEntities(SCN::Scene* scene, Camera* cam) {
 
 
 
->>>>>>> origin/main
 void Renderer::renderScene(SCN::Scene* scene, Camera* camera)
 {
 	this->scene = scene;
 	setupScene();
 
-<<<<<<< HEAD
-=======
+
 	//Camera updates are processed here before rendering
 
->>>>>>> origin/main
 	camera->updateViewMatrix();
 	camera->updateProjectionMatrix();
 	camera->extractFrustum();
 
-<<<<<<< HEAD
+
 	parseSceneEntities(scene, light_camera);
 	renderShadowMap(scene);
-=======
 	lights_list.clear();
->>>>>>> origin/main
 	parseSceneEntities(scene, camera);
 
 	//set the clear color (the background color)
@@ -362,31 +238,11 @@ void Renderer::renderScene(SCN::Scene* scene, Camera* camera)
 	if (skybox_cubemap)
 		renderSkybox(skybox_cubemap);
 
-<<<<<<< HEAD
-	// HERE =====================
-	// TODO: RENDER RENDERABLES
-	// ==========================
-	// From class
 
-	// Global Bool masks
-=======
->>>>>>> origin/main
 	glEnable(GL_DEPTH_TEST);
 	glDepthMask(GL_TRUE);
 	glDisable(GL_BLEND);
 
-<<<<<<< HEAD
-	// We had an if call here with if call.material.a
-	// Opaque pass
-	for (sRenderable& call : opaque_list) {
-		renderMeshWithMaterial(call.model, call.mesh, call.material);
-	}
-
-	// Change names for renderables
-	std::sort(transparent_list.begin(), transparent_list.end(),
-		[](const sRenderable& a, const sRenderable& b) {return a.distance > b.distance; });
-
-=======
 
 	// Opaque pass instead of just calling a material.
 	for (sRenderable& opaque_call : opaque_list) {
@@ -397,7 +253,6 @@ void Renderer::renderScene(SCN::Scene* scene, Camera* camera)
 	std::sort(transparent_list.begin(), transparent_list.end(),
 		[](const sRenderable& a, const sRenderable& b) {return a.distance > b.distance; });
 	
->>>>>>> origin/main
 	glEnable(GL_DEPTH_TEST);
 	glDepthMask(GL_FALSE);
 	glEnable(GL_BLEND);
@@ -411,10 +266,7 @@ void Renderer::renderScene(SCN::Scene* scene, Camera* camera)
 	glDepthMask(GL_TRUE);
 	glDisable(GL_BLEND);
 
-<<<<<<< HEAD
 
-=======
->>>>>>> origin/main
 }
 
 
@@ -473,14 +325,11 @@ void Renderer::renderMeshWithMaterial(const Matrix44 model, GFX::Mesh* mesh, SCN
 	glEnable(GL_DEPTH_TEST);
 
 	//chose a shader
-<<<<<<< HEAD
-	//shader = GFX::Shader::Get("texture");
-=======
+
 	// FOR TESTING WE CAN TURN THIS ON AGAIN
 	//shader = GFX::Shader::Get("texture");
 	
 	// For Assignment 2, we are changing this to lighting!
->>>>>>> origin/main
 	shader = GFX::Shader::Get("lighting");
 
 	assert(glGetError() == GL_NO_ERROR);
@@ -501,56 +350,8 @@ void Renderer::renderMeshWithMaterial(const Matrix44 model, GFX::Mesh* mesh, SCN
 		glDepthMask(GL_TRUE); // Write to depth buffer
 	}
 
-<<<<<<< HEAD
-	float t = getTime();
-	shader->setUniform("u_time", t);
-
-	// PHONG MULTICALL
-	std::vector<vec3> light_positions, light_colors, light_fronts;
-	std::vector<float> light_intensities, light_types;
-	std::vector<vec2> light_cones;
-
-	for (size_t i = 0; i < lights_list.size(); ++i) {
-		LightEntity* light = lights_list[i];
-		//load arrays of multicall
-		light_positions.push_back(light->root.getGlobalMatrix().getTranslation());
-		light_colors.push_back(light->color);
-		light_intensities.push_back(light->intensity);
-		light_fronts.push_back(light->root.getGlobalMatrix().frontVector());
-		light_types.push_back((float)light->light_type);
-
-		//Convert angles to radians for shader (cosine magic)
-		float cos_min = cos(light->cone_info.y * DEG2RAD); // cos(min)
-		float cos_max = cos(light->cone_info.x * DEG2RAD); // cos(max)
-
-		light_cones.push_back(vec2(cos_min, cos_max));
-	}
-
-	shader->setUniform("u_num_lights", (int)light_positions.size());
-	shader->setUniform3Array("u_light_fronts", (float*)light_fronts.data(), light_positions.size());
-	shader->setUniform1Array("u_light_types", light_types.data(), light_positions.size());
-	shader->setUniform3Array("u_light_positions", (float*)light_positions.data(), light_positions.size());
-	shader->setUniform3Array("u_light_colors", (float*)light_colors.data(), light_positions.size());
-	shader->setUniform1Array("u_light_intensities", light_intensities.data(), light_positions.size());
-	// Send shadow map uniforms to shader
-	if (shadow_fbo && shadow_fbo->depth_texture) {
-		shader->setUniform("u_shadow_map", shadow_fbo->depth_texture, 1);
-		shader->setUniform("u_light_viewprojection", light_viewprojection);
-		shader->setUniform("u_shadow_bias", shadow_bias);
-		shader->setUniform("u_shadow_maps[0]", shadow_fbo->depth_texture, 1);
-		shader->setUniform("u_shadow_maps[1]", shadow_fbo->depth_texture, 2);
-		shader->setUniform("u_shadow_maps[2]", shadow_fbo->depth_texture, 3);
-		shader->setUniform("u_shadow_maps[3]", shadow_fbo->depth_texture, 4);
-	}
-
-	if (light_cones.size() > 0) {
-		shader->setUniform2Array("u_light_cones", (float*)light_cones.data(), light_cones.size());
-	}
-
-
 
 	//PHONG MULTICALL
-=======
 	// We are preparing our color, and intensities from the shader.
 	std::vector<vec3> light_positions;		// This gives us the position of the lights
 	std::vector<vec3> light_colors;			// This is the RGB values of the light that is emitted.
@@ -597,42 +398,32 @@ void Renderer::renderMeshWithMaterial(const Matrix44 model, GFX::Mesh* mesh, SCN
 
 
 	//upload uniforms
->>>>>>> origin/main
 	shader->setUniform("u_model", model);
 	shader->setUniform("u_viewprojection", camera->viewprojection_matrix);
 	shader->setUniform("u_camera_position", camera->eye);
 	//upload uniforms, single call
-	//shader->setUniform("u_model", model);
 
+	//Upload shader uniforms
+	if (shadow_fbo && shadow_fbo->depth_texture) {
+		shader->setUniform("u_light_viewprojection", light_viewprojection);
+		shader->setUniform("u_shadow_map", shadow_fbo->depth_texture, 8);
+
+		shader->setUniform("u_shadow_light_index", shadow_light_index);
+		shader->setUniform("u_shadow_bias", shadow_bias);
+	}
 
 	// Upload camera uniforms
 	//shader->setUniform("u_viewprojection", camera->viewprojection_matrix);
 	//shader->setUniform("u_camera_position", camera->eye);
 
 
-	// Upload Light Arrays
 	int num_lights = (int)light_positions.size();
+	
 
 
-	//PHONG LIGHTING
-	//if (!lights_list.empty())
-	//{
-	//	LightEntity* light = lights_list[0];
-
-	//	shader->setUniform("u_light_color", light->color);
-	//	shader->setUniform("u_light_intensity", light->intensity);
-
-	//	// UNSICHER
-	//	vec3 light_pos = light->root.getGlobalMatrix().getTranslation();
-	//	shader->setUniform("u_light_position", light_pos);
-	//}
-
-<<<<<<< HEAD
-=======
 	// Upload time, for cool shader effects
 	float t = getTime();
 	shader->setUniform("u_time", t);
->>>>>>> origin/main
 
 	// Render just the verticies as a wireframe
 	if (render_wireframe)
@@ -648,13 +439,10 @@ void Renderer::renderMeshWithMaterial(const Matrix44 model, GFX::Mesh* mesh, SCN
 
 	//set the render state as it was before to avoid problems with future renders
 	//glDisable(GL_BLEND);
-<<<<<<< HEAD
 	glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 
 
-=======
-	glPolygonMode( GL_FRONT_AND_BACK, GL_FILL );
->>>>>>> origin/main
+
 }
 
 #ifndef SKIP_IMGUI
@@ -686,16 +474,29 @@ void Renderer::showUI()
 void Renderer::renderShadowMap(SCN::Scene* scene)
 {
 
-	// Find the shadow-casting light by index
+	// Find the shadow-casting light by index only directional for now
 	LightEntity* light = nullptr;
-	int found = 0;
 	for (BaseEntity* e : scene->entities) {
 		if (e->getType() == eEntityType::LIGHT) {
-			if (found == shadow_light_index) { light = (LightEntity*)e; break; }
-			found++;
+			LightEntity* l = (LightEntity*)e;
+			if (l->light_type == eLightType::SPOT) {
+				light = l;
+				break;
+				printf("light found");
+			}
 		}
 	}
 	if (!light || !light->cast_shadows) return;
+
+	int index = 0;
+	for (LightEntity* l : lights_list) {
+		if (l->light_type == eLightType::SPOT && l->cast_shadows) {
+			light = l;
+			shadow_light_index = index; 
+			break;
+		}
+		index++;
+	}
 
 	//Light camera set up
 	mat4 light_model = light->root.getGlobalMatrix();
@@ -705,11 +506,18 @@ void Renderer::renderShadowMap(SCN::Scene* scene)
 	if (fabs(light_front.dot(light_up)) > 0.99f)
 		light_up = Vector3f(0, 0, 1); // avoid gimbal lock
 
-	light_camera->lookAt(light_pos, light_pos + light_front, light_up);
+	light_camera->lookAt(light_pos, light_pos - light_front, light_up);
 
+	//Projection type depending on the light type
 	if (light->light_type == eLightType::DIRECTIONAL) {
-		float area = light->area / 2.0f;
+		float area = light->area;
 		light_camera->setOrthographic(-area, area, -area, area,
+			light->near_distance, light->max_distance);
+	}
+	else if (light->light_type == eLightType::SPOT) {
+		// cone_info.y = half-cone of outer cone; setPerspective needs full FOV
+		float fov = light->cone_info.y * 2.0f;
+		light_camera->setPerspective(fov, 1.0f,
 			light->near_distance, light->max_distance);
 	}
 
@@ -718,14 +526,20 @@ void Renderer::renderShadowMap(SCN::Scene* scene)
 
 	light_viewprojection = light_camera->viewprojection_matrix;
 
-	//Rendering
+	//Start rendering to the FBO
 	shadow_fbo->bind();
+	glViewport(0, 0, 1024, 1024);
+	glEnable(GL_DEPTH_TEST);
+	glDepthMask(GL_TRUE);
 	glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
 	glClear(GL_DEPTH_BUFFER_BIT);
 
 	GFX::Shader* shader = GFX::Shader::Get("plain");
 	shader->enable();
+
+	
 	shader->setUniform("u_viewprojection", light_viewprojection);
+
 	for (sRenderable& r : opaque_list) {
 		if (!r.mesh || !r.material) continue;
 		if (r.material->alpha_mode == SCN::eAlphaMode::BLEND) continue;
@@ -740,76 +554,7 @@ void Renderer::renderShadowMap(SCN::Scene* scene)
 	shadow_fbo->unbind();
 }
 	
-	/*
-	// Find the shadow-casting light by index
-	LightEntity* light = nullptr;
-	int found = 0;
-	for (BaseEntity* e : scene->entities) {
-		if (e->getType() == eEntityType::LIGHT) {
-			if (found == shadow_light_index) { light = (LightEntity*)e; break; }
-			found++;
-		}
-	}
-	if (!light || !light->cast_shadows) return;
-
-	// 3.2.1 — Configure light camera
-	Matrix44 light_model = light->root.getGlobalMatrix();
-	Vector3f light_pos = light_model.getTranslation();
-	Vector3f light_front = light_model.frontVector().normalize();
-	Vector3f light_up = Vector3f(0, 1, 0);
-	if (fabs(light_front.dot(light_up)) > 0.99f)
-		light_up = Vector3f(0, 0, 1); // avoid gimbal lock
-
-	light_camera->lookAt(light_pos, light_pos + light_front, light_up);
-
-	if (light->light_type == eLightType::SPOT) {
-		// cone_info.y = half-cone of outer cone; setPerspective needs full FOV
-		float fov = light->cone_info.y * 2.0f;
-		light_camera->setPerspective(fov, 1.0f,
-			light->near_distance, light->max_distance);
-	}
-	else if (light->light_type == eLightType::DIRECTIONAL) {
-		float area = light->area;
-		light_camera->setOrthographic(-area, area, -area, area,
-			light->near_distance, light->max_distance);
-	}
-	light_camera->updateViewMatrix();
-	light_camera->updateProjectionMatrix();
-	light_viewprojection = light_camera->viewprojection_matrix;
-
-	// 3.2.2 — Render depth pass to FBO
-	shadow_fbo->bind();
-	glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
-	glClear(GL_DEPTH_BUFFER_BIT);
-	glEnable(GL_DEPTH_TEST);
-	glDepthMask(GL_TRUE);
-
-	if (shadow_front_face_culling) {
-		glEnable(GL_CULL_FACE);
-		glCullFace(GL_FRONT); // 3.4.2
-	}
-
-	GFX::Shader* shader = GFX::Shader::Get("flat");
-	if (shader) {
-		shader->enable();
-		shader->setUniform("u_viewprojection", light_viewprojection);
-		shader->setUniform("u_color", Vector4f(1, 1, 1, 1));
-		for (sRenderable& r : opaque_list) {
-			if (!r.mesh || !r.material) continue;
-			if (r.material->alpha_mode == SCN::eAlphaMode::BLEND) continue;
-			shader->setUniform("u_model", r.model);
-			r.mesh->render(GL_TRIANGLES);
-		}
-		shader->disable();
-	}
-
-	// Restore state
-	if (shadow_front_face_culling) glCullFace(GL_BACK);
-	glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-	glDisable(GL_CULL_FACE);
-	shadow_fbo->unbind();
-}
-*/
+	
 #else
 void Renderer::showUI() {}
 #endif
