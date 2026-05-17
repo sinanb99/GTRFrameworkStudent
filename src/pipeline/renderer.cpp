@@ -2,6 +2,11 @@
 
 #include <algorithm> //sort
 
+#include <vector>
+#include <cmath>
+#include <string>
+
+
 #include "camera.h"
 #include "../gfx/gfx.h"
 #include "../gfx/shader.h"
@@ -14,7 +19,6 @@
 #include "../utils/utils.h"
 #include "../extra/hdre.h"
 #include "../core/ui.h"
-
 #include "scene.h"
 
 
@@ -64,6 +68,7 @@ Renderer::Renderer(const char* shader_atlas_filename)
 {
 	render_wireframe = false;
 	render_boundaries = false;
+	render_mode = SINGLE_PASS; // Initialize it to single pass by default
 	scene = nullptr;
 	skybox_cubemap = nullptr;
 
@@ -325,6 +330,59 @@ void Renderer::renderSkybox(GFX::Texture* cubemap)
 	glEnable(GL_DEPTH_TEST);
 }
 
+// We create a private helper function for our lights to use in both single and multipass
+void Renderer::uploadLights(GFX::Shader* shader, const std::vector<LightEntity*>& lights)
+{
+
+	/*
+	* We initialize all our lists.
+	* positions: position of the light
+	* colors: color information in RGB of our lights
+	* directions: frontvectors, so where our light is looking at
+	* intensities: How strong is our light?
+	* types: 0 for No light, 1 for Point Light, 2 for Spot Light, 3 for Directional Light
+	* cones: we initialize a cone for our Spotlight.
+	*/
+	std::vector<vec3> positions, colors, directions; //
+	std::vector<float> intensities;
+	std::vector<int> types;
+	std::vector<vec2> cones;
+
+
+	/*
+	* We initialize all our lists that are declared above.
+	*/
+	for (LightEntity* light : lights) {
+		positions.push_back(light->root.getGlobalMatrix().getTranslation());
+		colors.push_back(light->color);
+		intensities.push_back(light->intensity);
+		directions.push_back(light->root.getGlobalMatrix().frontVector());
+		types.push_back((int)light->light_type);
+
+		// Initialize cone of our spotlight
+		float cos_inner = cos(light->cone_info.x * DEG2RAD);
+		float cos_outer = cos(light->cone_info.y * DEG2RAD);
+		cones.push_back(vec2(cos_inner, cos_outer));
+	}
+
+
+	// upload the shader uniforms so we can use them in the shader.
+	// According to gemini it might be faster if we do this in renderScene instead of every Mesh. (keep in mind if we need better efficiency)
+	shader->setUniform("u_num_lights", (int)positions.size());										//set a uniform for the amount of lights existing
+	shader->setUniform3Array("u_light_positions", (float*)positions.data(), positions.size());  //set a uniform to access light positions
+	shader->setUniform3Array("u_light_colors", (float*)colors.data(), positions.size());		//set a uniform to access light colors 
+	shader->setUniform1Array("u_light_intensities", intensities.data(), positions.size());		//set a uniform to access light intensities
+
+	// Different types for shader
+	shader->setUniform3Array("u_light_directions", (float*)directions.data(), directions.size()); //set directional information
+	shader->setUniform1Array("u_light_types", (int*)types.data(), types.size());
+
+	// For Spotlights, we set the uniform for the cones here
+	shader->setUniform2Array("u_light_cones", (float*)cones.data(), cones.size());
+
+}
+
+
 // Renders a mesh given its transform and material
 void Renderer::renderMeshWithMaterial(const Matrix44 model, GFX::Mesh* mesh, SCN::Material* material)
 {
@@ -403,15 +461,8 @@ void Renderer::renderMeshWithMaterial(const Matrix44 model, GFX::Mesh* mesh, SCN
 	shader->setUniform3Array("u_light_positions", (float*)light_positions.data(), light_positions.size());  //set a uniform to access light positions
 	shader->setUniform3Array("u_light_colors", (float*)light_colors.data(), light_positions.size());		//set a uniform to access light colors 
 	shader->setUniform1Array("u_light_intensities", light_intensities.data(), light_positions.size());		//set a uniform to access light intensities
+	// We split for the single and multi-pass but first we need to set the common uniforms:
 	
-	// Different types for shader
-	shader->setUniform3Array("u_light_directions", (float*)light_directions.data(), light_directions.size()); //set directional information
-	shader->setUniform1Array("u_light_types", (int*)light_types.data(), light_types.size());
-
-	// For Spotlights, we set the uniform for the cones here
-	shader->setUniform2Array("u_light_cones", (float*)light_cones.data(), light_cones.size());
-
-
 	//upload uniforms
 	shader->setUniform("u_model", model);
 	shader->setUniform("u_viewprojection", camera->viewprojection_matrix);
@@ -489,6 +540,8 @@ void Renderer::renderMeshWithMaterial(const Matrix44 model, GFX::Mesh* mesh, SCN
 		glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
 
 	material->bind(shader);
+	// We don't even need Multi-pass so we will let it stay like this.
+	uploadLights(shader, lights_list);
 
 	//do the draw call that renders the mesh into the screen
 	mesh->render(GL_TRIANGLES);
@@ -503,33 +556,6 @@ void Renderer::renderMeshWithMaterial(const Matrix44 model, GFX::Mesh* mesh, SCN
 
 
 }
-
-#ifndef SKIP_IMGUI
-
-void Renderer::showUI()
-{
-
-	ImGui::Checkbox("Wireframe", &render_wireframe);
-	ImGui::Checkbox("Boundaries", &render_boundaries);
-
-	ImGui::Separator();
-	ImGui::Text("Shadow Map");
-	ImGui::SliderFloat("Shadow Bias", &shadow_bias, 0.0001f, 0.05f);
-
-	ImGui::Checkbox("Front Face Culling", &shadow_front_face_culling);
-	ImGui::SliderInt("Shadow Light Index", &shadow_light_index, 0, 5);
-
-	if (ImGui::TreeNode("Material")) {
-		// Example for the default material or a selected node's material
-		ImGui::SliderFloat("Shininess", &Material::default_material.roughness_factor, 0.0f, 1.0f);
-		ImGui::ColorEdit3("Color", Material::default_material.color.v);
-		ImGui::TreePop();
-
-	}
-	//add here your stuff
-	//...
-}
-
 
 void Renderer::renderShadowMap(SCN::Scene* scene)
 {
@@ -576,9 +602,9 @@ void Renderer::renderShadowMap(SCN::Scene* scene)
 		glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
 		glClear(GL_DEPTH_BUFFER_BIT);
 		//Check for Frontface culling for shadow acne reduction
-		if (shadow_front_face_culling){
-		glEnable(GL_CULL_FACE);
-		glFrontFace(GL_CW);
+		if (shadow_front_face_culling) {
+			glEnable(GL_CULL_FACE);
+			glFrontFace(GL_CW);
 		}
 
 		GFX::Shader* shader = GFX::Shader::Get("plain");
@@ -599,12 +625,82 @@ void Renderer::renderShadowMap(SCN::Scene* scene)
 		glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
 		glFrontFace(GL_CCW);
 		glDisable(GL_CULL_FACE);
-		
+
 		shadow_fbos[i]->unbind();
 	}
 }
-	
-	
+
+#ifndef SKIP_IMGUI
+void Renderer::showUI()
+{
+
+	// 1. Basic Checkboxes
+	ImGui::Checkbox("Wireframe", &render_wireframe);
+	ImGui::Checkbox("Boundaries", &render_boundaries);
+
+	ImGui::Separator();
+	ImGui::Text("Shadow Map");
+	ImGui::SliderFloat("Shadow Bias", &shadow_bias, 0.0001f, 0.05f);
+
+	ImGui::Checkbox("Front Face Culling", &shadow_front_face_culling);
+	ImGui::SliderInt("Shadow Light Index", &shadow_light_index, 0, 5);
+
+	SCN::Material* mat = nullptr;
+
+	// 2. Selection Logic
+	if (SCN::Node::s_selected && SCN::Node::s_selected->material) {
+		mat = SCN::Node::s_selected->material;
+	}
+	else if (SCN::BaseEntity::s_selected && SCN::BaseEntity::s_selected->getType() == SCN::eEntityType::PREFAB) {
+		SCN::PrefabEntity* pref = (SCN::PrefabEntity*)SCN::BaseEntity::s_selected;
+
+		// Recursive search for the first material in the tree
+		std::vector<SCN::Node*> nodes_to_check;
+		nodes_to_check.push_back(&(pref->root));
+
+		while (!nodes_to_check.empty()) {
+			SCN::Node* current = nodes_to_check.back();
+			nodes_to_check.pop_back();
+
+			if (current->material) {
+				mat = current->material;
+				break;
+			}
+
+			for (SCN::Node* child : current->children) {
+				nodes_to_check.push_back(child);
+			}
+		}
+	}
+
+	// 3. Drawing the UI
+	ImGui::Separator();
+	if (mat) {
+
+		if (mat->shininess <= 1.0f) {
+			mat->shininess = pow(2.0f, (1.0f - mat->roughness_factor) * 10.0f);
+		}
+
+		// Use a persistent ID for the Tree
+		if (ImGui::TreeNodeEx((void*)(intptr_t)mat->index, ImGuiTreeNodeFlags_DefaultOpen, "Material: %s", mat->name.empty() ? "unnamed" : mat->name.c_str()))
+		{
+			// Link Roughness to Shininess
+			if (ImGui::SliderFloat("Roughness", &mat->roughness_factor, 0.0f, 1.0f)) {
+				mat->shininess = pow(2.0f, (1.0f - mat->roughness_factor) * 10.0f);
+			}
+
+			// Link Shininess to Roughness
+			if (ImGui::SliderFloat("Phong Shininess", &mat->shininess, 1.0f, 1024.0f, "%.1f", ImGuiSliderFlags_Logarithmic)) {
+				mat->roughness_factor = 1.0f - (log2(mat->shininess) / 10.0f);
+			}
+
+			ImGui::TreePop();
+		}
+	}
+	else {
+		ImGui::TextDisabled("(No material found in selection)");
+	}
+}
 #else
 void Renderer::showUI() {}
 #endif
