@@ -77,8 +77,17 @@ Renderer::Renderer(const char* shader_atlas_filename)
 	shadow_light_index = 1;
 
 	// 3.1 — Depth-only FBO, 1024x1024
-	shadow_fbo = new GFX::FBO();
-	shadow_fbo->setDepthOnly(1024, 1024);
+	//shadow_fbo = new GFX::FBO();
+	//shadow_fbo->setDepthOnly(1024, 1024);
+	// Initialize the array to null
+	for (int i = 0; i < 4; ++i) {
+		shadow_fbos[i] = nullptr;
+	}
+
+	for (int i = 0; i < 4; ++i) {
+		shadow_fbos[i] = new GFX::FBO();
+		shadow_fbos[i]->setDepthOnly(1024, 1024);
+	}
 	light_camera = new Camera();
 }
 
@@ -97,7 +106,7 @@ struct sRenderable
 	GFX::Mesh* mesh; // Pointer to the Vertex, or Index Buffer. This is the "what" of the object (3D coordiantes, normals,...)
 	SCN::Material* material; // This defines Shaders and Textures, tells GPU how to interpret light, color, and roughness
 	Matrix44 model; // The transfomration to move from object space to world space
-	float distance; // If the material is see-through, we must order by distance. (Z-Direction)
+	float distance = 0.0f; // If the material is see-through, we must order by distance. (Z-Direction)
 };
 
 std::vector<sRenderable> render_list; // render_list that includes everything that is to be rendered.
@@ -127,13 +136,18 @@ void parseNode(Node* node, Camera* cam) {
 
 	if (node->mesh) {
 		BoundingBox worldBox = transformBoundingBox(node->getGlobalMatrix(), node->mesh->box);
-		char res = cam->testBoxInFrustum(worldBox.center, worldBox.halfsize);
-		if (res == CLIP_OUTSIDE) {
-			return;
-		}
-		else if (res == CLIP_INSIDE) {
-			addSubtree(node);
-			return;
+		if (cam)
+		{
+			char res = cam->testBoxInFrustum(worldBox.center, worldBox.halfsize);
+
+			if (res == CLIP_OUTSIDE)
+				return;
+
+			if (res == CLIP_INSIDE)
+			{
+				addSubtree(node);
+				return;
+			}
 		}
 	}
 
@@ -153,6 +167,7 @@ void Renderer::parseSceneEntities(SCN::Scene* scene, Camera* cam) {
 	render_list.clear();
 	opaque_list.clear();
 	transparent_list.clear();
+	lights_list.clear();
 
 
 	
@@ -224,7 +239,7 @@ void Renderer::renderScene(SCN::Scene* scene, Camera* camera)
 
 	parseSceneEntities(scene, light_camera);
 	renderShadowMap(scene);
-	lights_list.clear();
+	//lights_list.clear();
 	parseSceneEntities(scene, camera);
 
 	//set the clear color (the background color)
@@ -404,14 +419,58 @@ void Renderer::renderMeshWithMaterial(const Matrix44 model, GFX::Mesh* mesh, SCN
 	//upload uniforms, single call
 
 	//Upload shader uniforms
-	if (shadow_fbo && shadow_fbo->depth_texture) {
-		shader->setUniform("u_light_viewprojection", light_viewprojection);
-		shader->setUniform("u_shadow_map", shadow_fbo->depth_texture, 8);
-
-		shader->setUniform("u_shadow_light_index", shadow_light_index);
-		shader->setUniform("u_shadow_bias", shadow_bias);
+	// Hardcoding every light
+	if (lights_list.size() > 0 && shadow_fbos[0] && shadow_fbos[0]->depth_texture)
+	{
+		shader->setUniform("u_light_viewprojections[0]", light_viewprojections[0]);
+		shader->setUniform("u_shadow_maps[0]", shadow_fbos[0]->depth_texture, 8);
+		shader->setUniform("u_cast_shadows[0]", lights_list[0]->cast_shadows);
 	}
 
+	if (lights_list.size() > 1 && shadow_fbos[1] && shadow_fbos[1]->depth_texture)
+	{
+		shader->setUniform("u_light_viewprojections[1]", light_viewprojections[1]);
+		shader->setUniform("u_shadow_maps[1]", shadow_fbos[1]->depth_texture, 9);
+		shader->setUniform("u_cast_shadows[1]", lights_list[1]->cast_shadows);
+	}
+
+	if (lights_list.size() > 2 && shadow_fbos[2] && shadow_fbos[2]->depth_texture)
+	{
+		shader->setUniform("u_light_viewprojections[2]", light_viewprojections[2]);
+		shader->setUniform("u_shadow_maps[2]", shadow_fbos[2]->depth_texture, 10);
+		shader->setUniform("u_cast_shadows[2]", lights_list[2]->cast_shadows);
+	}
+
+	if (lights_list.size() > 3 && shadow_fbos[3] && shadow_fbos[3]->depth_texture)
+	{
+		shader->setUniform("u_light_viewprojections[3]", light_viewprojections[3]);
+		shader->setUniform("u_shadow_maps[3]", shadow_fbos[3]->depth_texture, 11);
+		shader->setUniform("u_cast_shadows[3]", lights_list[3]->cast_shadows);
+	}
+
+	/*Cant get this to work without having "invalid comparator" or iniform crashes
+	for (int i = 0; i < lights_list.size(); ++i)
+	{
+		shader->setUniform(
+			("u_light_viewprojections[" + std::to_string(i) + "]").c_str(),
+			light_viewprojections[i]
+		);
+		
+		shader->setUniform(
+			("u_shadow_maps[" + std::to_string(i) + "]").c_str(),
+			shadow_fbos[i]->depth_texture,
+			8 + i
+		);
+		
+		shader->setUniform(
+			("u_cast_shadows[" + std::to_string(i) + "]").c_str(),
+			lights_list[i]->cast_shadows
+		);
+
+	}
+*/
+	shader->setUniform("u_shadow_bias", shadow_bias);
+	
 	// Upload camera uniforms
 	//shader->setUniform("u_viewprojection", camera->viewprojection_matrix);
 	//shader->setUniform("u_camera_position", camera->eye);
@@ -456,6 +515,7 @@ void Renderer::showUI()
 	ImGui::Separator();
 	ImGui::Text("Shadow Map");
 	ImGui::SliderFloat("Shadow Bias", &shadow_bias, 0.0001f, 0.05f);
+
 	ImGui::Checkbox("Front Face Culling", &shadow_front_face_culling);
 	ImGui::SliderInt("Shadow Light Index", &shadow_light_index, 0, 5);
 
@@ -473,85 +533,75 @@ void Renderer::showUI()
 
 void Renderer::renderShadowMap(SCN::Scene* scene)
 {
+	//Calculate the shadow FBO for every light 
+	for (int i = 0; i < lights_list.size(); ++i) {
+		LightEntity* light = lights_list[i];
+		if (!light->cast_shadows) continue;
 
-	// Find the shadow-casting light by index only directional for now
-	LightEntity* light = nullptr;
-	for (BaseEntity* e : scene->entities) {
-		if (e->getType() == eEntityType::LIGHT) {
-			LightEntity* l = (LightEntity*)e;
-			if (l->light_type == eLightType::SPOT) {
-				light = l;
-				break;
-				printf("light found");
-			}
+		//Light camera set up
+		mat4 light_model = light->root.getGlobalMatrix();
+		vec3 light_pos = light_model.getTranslation();
+		Vector3f light_front = light_model.frontVector().normalize();
+		Vector3f light_up = Vector3f(0, 1, 0);
+		if (fabs(light_front.dot(light_up)) > 0.99f)
+			light_up = Vector3f(0, 0, 1); // avoid gimbal lock
+
+		light_camera->lookAt(light_pos, light_pos - light_front, light_up);
+
+		//Projection type depending on the light type
+		if (light->light_type == eLightType::DIRECTIONAL) {
+			float area = light->area / 2.0f;
+			light_camera->setOrthographic(-area, area, -area, area,
+				light->near_distance, light->max_distance);
 		}
-	}
-	if (!light || !light->cast_shadows) return;
-
-	int index = 0;
-	for (LightEntity* l : lights_list) {
-		if (l->light_type == eLightType::SPOT && l->cast_shadows) {
-			light = l;
-			shadow_light_index = index; 
-			break;
+		else if (light->light_type == eLightType::SPOT) {
+			// cone_info.y = half-cone of outer cone; setPerspective needs full FOV
+			float fov = light->cone_info.y * 2.0f;
+			light_camera->setPerspective(fov, 1.0f,
+				light->near_distance, light->max_distance);
 		}
-		index++;
+
+		light_camera->updateViewMatrix();
+		light_camera->updateProjectionMatrix();
+
+		light_viewprojections[i] = light_camera->viewprojection_matrix;
+
+		//parseSceneEntities(scene, light_camera);
+
+		//Start rendering to the FBO
+		shadow_fbos[i]->bind();
+		glViewport(0, 0, 1024, 1024);
+		glEnable(GL_DEPTH_TEST);
+		glDepthMask(GL_TRUE);
+		glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+		glClear(GL_DEPTH_BUFFER_BIT);
+		//Check for Frontface culling for shadow acne reduction
+		if (shadow_front_face_culling){
+		glEnable(GL_CULL_FACE);
+		glFrontFace(GL_CW);
+		}
+
+		GFX::Shader* shader = GFX::Shader::Get("plain");
+		shader->enable();
+
+
+		shader->setUniform("u_viewprojection", light_viewprojections[i]);
+
+		for (sRenderable& r : opaque_list) {
+			if (!r.mesh || !r.material) continue;
+			if (r.material->alpha_mode == SCN::eAlphaMode::BLEND) continue;
+			shader->setUniform("u_model", r.model);
+			r.mesh->render(GL_TRIANGLES);
+		}
+		shader->disable();
+
+
+		glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+		glFrontFace(GL_CCW);
+		glDisable(GL_CULL_FACE);
+		
+		shadow_fbos[i]->unbind();
 	}
-
-	//Light camera set up
-	mat4 light_model = light->root.getGlobalMatrix();
-	vec3 light_pos = light_model.getTranslation();
-	Vector3f light_front = light_model.frontVector().normalize();
-	Vector3f light_up = Vector3f(0, 1, 0);
-	if (fabs(light_front.dot(light_up)) > 0.99f)
-		light_up = Vector3f(0, 0, 1); // avoid gimbal lock
-
-	light_camera->lookAt(light_pos, light_pos - light_front, light_up);
-
-	//Projection type depending on the light type
-	if (light->light_type == eLightType::DIRECTIONAL) {
-		float area = light->area;
-		light_camera->setOrthographic(-area, area, -area, area,
-			light->near_distance, light->max_distance);
-	}
-	else if (light->light_type == eLightType::SPOT) {
-		// cone_info.y = half-cone of outer cone; setPerspective needs full FOV
-		float fov = light->cone_info.y * 2.0f;
-		light_camera->setPerspective(fov, 1.0f,
-			light->near_distance, light->max_distance);
-	}
-
-	light_camera->updateViewMatrix();
-	light_camera->updateProjectionMatrix();
-
-	light_viewprojection = light_camera->viewprojection_matrix;
-
-	//Start rendering to the FBO
-	shadow_fbo->bind();
-	glViewport(0, 0, 1024, 1024);
-	glEnable(GL_DEPTH_TEST);
-	glDepthMask(GL_TRUE);
-	glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
-	glClear(GL_DEPTH_BUFFER_BIT);
-
-	GFX::Shader* shader = GFX::Shader::Get("plain");
-	shader->enable();
-
-	
-	shader->setUniform("u_viewprojection", light_viewprojection);
-
-	for (sRenderable& r : opaque_list) {
-		if (!r.mesh || !r.material) continue;
-		if (r.material->alpha_mode == SCN::eAlphaMode::BLEND) continue;
-		shader->setUniform("u_model", r.model);
-		r.mesh->render(GL_TRIANGLES);
-	}
-	shader->disable();
-
-
-	glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-
-	shadow_fbo->unbind();
 }
 	
 	

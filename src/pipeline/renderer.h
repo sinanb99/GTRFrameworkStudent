@@ -38,6 +38,11 @@ namespace SCN {
 		int shadow_light_index = 0;
 		bool shadow_front_face_culling = true;
 
+		GFX::FBO* shadow_fbos[4];
+
+		// Array to store the view-projection matrix for each light
+		Matrix44 light_viewprojections[4];
+
 		// And declare the method:
 		void renderShadowMap(SCN::Scene* scene);
 		std::vector<SCN::LightEntity*> lights_list; // We create a list of lights, so we can work through all the lights we get (Need to be a lightentity obviously)
@@ -50,6 +55,8 @@ namespace SCN {
 
 		//add here your functions
 		//...
+
+		void collectLights(Scene* scene);
 
 		void parseSceneEntities(SCN::Scene* scene, Camera* camera);
 
