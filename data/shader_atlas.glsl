@@ -280,9 +280,9 @@ uniform sampler2D u_normal_texture;
 uniform bool u_has_normal_map;
 
 //Shadow map uniforms
-uniform mat4 u_light_viewprojection;
-uniform sampler2D u_shadow_map;
-uniform int u_shadow_light_index;
+uniform mat4 u_light_viewprojections[4];
+uniform sampler2D u_shadow_maps[4];
+uniform bool u_cast_shadows[4];
 uniform float u_shadow_bias;
 
 out vec4 FragColor;
@@ -364,31 +364,41 @@ void main()
 		float shadow_factor = 1.0; // Standard: no shadow
 
         // Calculating shadow
-        if(i == u_shadow_light_index) 
+if(i < 4 && u_cast_shadows[i])
+{
+    // Convert world space to homogeneous space
+    vec4 light_clip_pos =
+        u_light_viewprojections[i]
+        * vec4(v_world_position, 1.0);
+
+    // Perspective division
+    vec3 proj_coords =
+        light_clip_pos.xyz / light_clip_pos.w;
+
+    // Transform from Clip Space [-1,1]
+    // to Texture Space [0,1]
+    proj_coords = proj_coords * 0.5 + 0.5;
+
+    // Only calculate when inside shadow map
+    if(proj_coords.x >= 0.0 && proj_coords.x <= 1.0 &&
+       proj_coords.y >= 0.0 && proj_coords.y <= 1.0)
+    {
+        float current_depth = proj_coords.z;
+
+        float closest_depth =
+            texture(
+                u_shadow_maps[i],
+                proj_coords.xy
+            ).r;
+
+        
+
+        if(current_depth > closest_depth + u_shadow_bias)
         {
-            //Convert world space to homogeneous space
-            vec4 light_clip_pos = u_light_viewprojection * vec4(v_world_position, 1.0);
-            
-            //Perspektiv division
-            vec3 proj_coords = light_clip_pos.xyz / light_clip_pos.w;
-            
-            //Transform from Clip Space [-1, 1] to Texture Space [0, 1]
-            proj_coords = proj_coords * 0.5 + 0.5;
-
-            // Only calculate when in shadow map
-            if(proj_coords.x >= 0.0 && proj_coords.x <= 1.0 && 
-               proj_coords.y >= 0.0 && proj_coords.y <= 1.0) 
-            {
-                float current_depth = proj_coords.z;
-                float closest_depth = texture(u_shadow_map, proj_coords.xy).r;
-
-                //Depth comparison with bias
-                float bias = u_shadow_bias; 
-                if(current_depth > closest_depth + bias) {
-                    shadow_factor = 0.0; //Area is shadowed -> NO LIGHT
-                }
-            }
+            shadow_factor = 0.0;
         }
+    }
+}
 		
 		if(u_light_types[i] == 1) // Point light
 		{
