@@ -125,6 +125,7 @@ void Renderer::parseSceneEntities(SCN::Scene* scene, Camera* cam) {
 	render_list.clear();
 	opaque_list.clear();
 	transparent_list.clear();
+	lights_list.clear();
 
 
 	
@@ -191,8 +192,17 @@ void Renderer::renderScene(SCN::Scene* scene, Camera* camera)
 	camera->updateProjectionMatrix();
 	camera->extractFrustum();
 
-	lights_list.clear();
 	parseSceneEntities(scene, camera);
+
+	if (use_deferred)
+		renderDeferred(scene, camera);
+	else
+	{
+		renderForward(scene, camera);
+	}
+} // NEED TO REMOVE THIS SOON FOR TESTING
+
+void Renderer::renderForward(SCN::Scene * scene, Camera * camera) {
 
 	//set the clear color (the background color)
 	glClearColor(scene->background_color.x, scene->background_color.y, scene->background_color.z, 1.0);
@@ -232,6 +242,40 @@ void Renderer::renderScene(SCN::Scene* scene, Camera* camera)
 	glDepthMask(GL_TRUE);
 	glDisable(GL_BLEND);
 
+}
+
+
+// G-Buffer renderer for Assignment 4
+void Renderer::renderGBuffer(Camera* camera)
+{
+	gbuffer_fbo->bind();
+	glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+	glEnable(GL_DEPTH_TEST);
+	glDepthMask(GL_TRUE);
+	glDisable(GL_BLEND);
+	glEnable(GL_CULL_FACE);
+	glCullFace(GL_BACK);
+
+	GFX::Shader* shader = GFX::Shader::Get("gbuffer");
+	if (!shader) {
+		gbuffer_fbo->unbind();
+		return;
+	}
+
+	shader->enable();
+	shader->setUniform("u_viewprojection", camera->viewprojection_matrix);
+
+	for (sRenderable& call : opaque_list) {
+		if (!call.mesh || !call.material) continue;
+		call.material->bind(shader);
+		shader->setUniform("u_model", call.model);
+		call.mesh->render(GL_TRIANGLES);
+	}
+
+	shader->disable();
+	gbuffer_fbo->unbind();
 }
 
 
