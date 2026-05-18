@@ -12,6 +12,49 @@ gbuffer basic.vs gbuffer.fs
 deferred quad.vs deferred.fs
 lightvolume basic.vs lightvolume.fs
 
+\pbr_math
+const float PI = 3.14159265359;
+
+// 1. Normal Distribution Function (GGX / Trowbridge-Reitz)
+float DistributionGGX(vec3 N, vec3 H, float roughness) {
+    float a = roughness * roughness;
+    float a2 = a * a;
+    float NdotH = max(dot(N, H), 0.0);
+    float NdotH2 = NdotH * NdotH;
+    
+    float num = a2;
+    float denom = (NdotH2 * (a2 - 1.0) + 1.0);
+    denom = PI * denom * denom;
+    
+    return num / max(denom, 0.0001); // Prevent division by 0
+}
+
+// 2. Geometry Function (Schlick-GGX)
+float GeometrySchlickGGX(float NdotV, float roughness) {
+    float r = (roughness + 1.0);
+    float k = (r * r) / 8.0; // Use k derived for analytic lights
+    
+    float num = NdotV;
+    float denom = NdotV * (1.0 - k) + k;
+    
+    return num / max(denom, 0.0001);
+}
+
+// 3. Smith's Method for Geometry Shadowing
+float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness) {
+    float NdotV = max(dot(N, V), 0.0);
+    float NdotL = max(dot(N, L), 0.0);
+    float ggx2 = GeometrySchlickGGX(NdotV, roughness);
+    float ggx1 = GeometrySchlickGGX(NdotL, roughness);
+    
+    return ggx1 * ggx2;
+}
+
+// 4. Fresnel Equation (Schlick's Approximation)
+vec3 fresnelSchlick(float cosTheta, vec3 F0) {
+    return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+}
+
 \perturbNormal
 // From https://github.com/glslify/glsl-perturb-normal/blob/master/cotangent-frame.glsl
 mat3 cotangent_frame(vec3 N, vec3 p, vec2 uv)
@@ -229,6 +272,11 @@ uniform float u_alpha_cutoff;
 uniform sampler2D u_normal_texture;
 uniform int u_has_normal_map;
 
+uniform sampler2D u_metallic_roughness_texture;
+uniform int u_has_metallic_roughness_map;
+uniform float u_metallic_factor;
+uniform float u_roughness_factor;
+
 layout(location = 0) out vec4 out_albedo;
 layout(location = 1) out vec4 out_perturbed_normal;
 layout(location = 2) out vec4 out_geometric_normal;
@@ -274,95 +322,205 @@ void main()
 	out_albedo = color;
 	out_perturbed_normal = vec4(N_perturbed * 0.5 + 0.5, 1.0);
 	out_geometric_normal = vec4(N_geo * 0.5 + 0.5, 1.0);
+
+	float ao = 1.0;
+    float roughness = u_roughness_factor;
+    float metallic = u_metallic_factor;
+
+    if (u_has_metallic_roughness_map != 0) {
+        vec3 mr_sample = texture(u_metallic_roughness_texture, v_uv).rgb;
+        ao = mr_sample.r;         // R: baked ambient occlusion
+        roughness = mr_sample.g;  // G: roughness
+        metallic = mr_sample.b;   // B: metalness
+    }
+
+    out_albedo = vec4(color.rgb, ao); // Store AO in albedo alpha
+    out_perturbed_normal = vec4(N_perturbed * 0.5 + 0.5, roughness); // Store Roughness here
+    out_geometric_normal = vec4(N_geo * 0.5 + 0.5, metallic);         // Store Metalness here
 }
+
+
+
 \deferred.fs
+
 #version 330 core
+
 in vec2 v_uv;
 
-uniform sampler2D u_color_texture;
-uniform sampler2D u_normal_texture;
-uniform sampler2D u_geo_normal_texture; 
-uniform sampler2D u_depth_texture;
+// G-Buffer Textures
+uniform sampler2D u_color_texture;         // RGB: Albedo, A: Ambient Occlusion (AO)
+uniform sampler2D u_normal_texture;        // RGB: Perturbed Normal, A: Roughness
+uniform sampler2D u_geo_normal_texture;    // RGB: Geometric Normal, A: Metalness
+uniform sampler2D u_depth_texture;         // Depth buffer
+
+// Camera matrices and positions
 uniform mat4 u_inverse_viewprojection;
-
-uniform vec3 u_ambient_light;
 uniform vec3 u_camera_position;
+uniform vec3 u_ambient_light;
 
+// Analytical Light Uniforms
+#define MAX_LIGHTS 4
 uniform int u_num_lights;
-uniform vec3 u_light_directions[10];
-uniform vec3 u_light_colors[10];
-uniform float u_light_intensities[10];
+uniform int u_light_types[MAX_LIGHTS];
+uniform vec3 u_light_positions[MAX_LIGHTS];
+uniform vec3 u_light_directions[MAX_LIGHTS];
+uniform vec3 u_light_colors[MAX_LIGHTS];
+uniform float u_light_intensities[MAX_LIGHTS];
 
-// Shadow uniform arrays
-uniform mat4 u_light_viewprojections[4];
-uniform sampler2D u_shadow_maps[4];
-uniform int u_cast_shadows[4];
-uniform float u_shadow_bias;
-
+// Output channel
 out vec4 FragColor;
 
-void main()
-{
-	float depth = texture(u_depth_texture, v_uv).x;
-	if (depth >= 1.0) discard;
+// --- Cook-Torrance PBR Constants & Functions ---
+const float PI = 3.14159265359;
 
-	vec4 albedo = texture(u_color_texture, v_uv);
-	
-	vec3 N = normalize(texture(u_normal_texture, v_uv).xyz * 2.0 - 1.0);
-	vec3 N_geo = normalize(texture(u_geo_normal_texture, v_uv).xyz * 2.0 - 1.0);
+// 1. Trowbridge-Reitz GGX Normal Distribution Function (D)
+float DistributionGGX(vec3 N, vec3 H, float roughness) {
+    float a = roughness * roughness;
+    float a2 = a * a;
+    float NdotH = max(dot(N, H), 0.0);
+    float NdotH2 = NdotH * NdotH;
+    
+    float num = a2;
+    float denom = (NdotH2 * (a2 - 1.0) + 1.0);
+    denom = PI * denom * denom;
+    
+    return num / max(denom, 0.0001); // Safe delta
+}
 
-	// Reconstruct 3D Position
-	vec4 screen_pos = vec4(v_uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
-	vec4 world_pos = u_inverse_viewprojection * screen_pos;
-	vec3 WP = world_pos.xyz / world_pos.w;
+// 2. Geometry Schlick-GGX Sub-function (G1)
+float GeometrySchlickGGX(float NdotV, float roughness) {
+    float r = (roughness + 1.0);
+    float k = (r * r) / 8.0;
 
-	vec3 V = normalize(u_camera_position - WP);
+    float num = NdotV;
+    float denom = NdotV * (1.0 - k) + k;
+    
+    return num / max(denom, 0.0001);
+}
 
-	vec3 ambient = albedo.xyz * u_ambient_light;
-	vec3 total_direct_light = vec3(0.0);
+// 3. Smith's Method for Geometry Shadowing (G)
+float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness) {
+    float NdotV = max(dot(N, V), 0.0);
+    float NdotL = max(dot(N, L), 0.0);
+    float ggx2 = GeometrySchlickGGX(NdotV, roughness);
+    float ggx1 = GeometrySchlickGGX(NdotL, roughness);
+    
+    return ggx1 * ggx2;
+}
 
-	for (int i = 0; i < u_num_lights; i++)
-	{
-		vec3 L = normalize(u_light_directions[i] * -1.0);
-		float shadow_factor = 1.0;
+// 4. Fresnel Equation using Schlick's Approximation (F)
+vec3 fresnelSchlick(float cosTheta, vec3 F0) {
+    return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+}
 
-		// Directional shadow pass matching forward logic
-		if(i < 4 && u_cast_shadows[i] != 0)
-		{
-			vec4 light_clip_pos = u_light_viewprojections[i] * vec4(WP, 1.0);
-			vec3 proj_coords = light_clip_pos.xyz / light_clip_pos.w;
-			proj_coords = proj_coords * 0.5 + 0.5;
+void main() {
+    // --- Step 1: Read Depth and Reconstruct World Position ---
+    float depth = texture(u_depth_texture, v_uv).x;
+    
+    // If it's the background skybox/clear color depth value, discard the fragment
+    if (depth >= 1.0) {
+        discard;
+    }
 
-			if(proj_coords.x >= 0.0 && proj_coords.x <= 1.0 &&
-			   proj_coords.y >= 0.0 && proj_coords.y <= 1.0)
-			{
-				float current_depth = proj_coords.z;
-				float closest_depth = texture(u_shadow_maps[i], proj_coords.xy).r;
+    // Turn screen-space UV coordinates back into World Space Positions
+    vec4 screen_pos = vec4(v_uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+    vec4 world_pos = u_inverse_viewprojection * screen_pos;
+    vec3 WP = world_pos.xyz / world_pos.w;
 
-				if(current_depth > closest_depth + u_shadow_bias)
-				{
-					shadow_factor = 0.0;
-				}
-			}
-		}
+    // --- Step 2: Unpack G-Buffer Channels ---
+    vec4 albedo_ao_sample = texture(u_color_texture, v_uv);
+    vec4 norm_rough_sample = texture(u_normal_texture, v_uv);
+    vec4 geo_metal_sample = texture(u_geo_normal_texture, v_uv);
 
-		float NdotL = max(0.0, dot(N, L));
-		float NdotL_geo = max(0.0, dot(N_geo, L)); 
-		
-		vec3 light_energy = u_light_colors[i] * u_light_intensities[i] * shadow_factor;
-		vec3 diffuse = (NdotL * NdotL_geo) * light_energy;
+    // Color/Albedo properties and embedded Material Properties
+    vec3 albedo = albedo_ao_sample.rgb;
+    float ao = albedo_ao_sample.a;
+    float roughness = norm_rough_sample.a;
+    float metallic = geo_metal_sample.a;
 
-		float spec_strength = 0.5;
-		vec3 R = reflect(-L, N);
-		float RdotV = max(0.0, dot(R, V));
-		float spec_factor = pow(RdotV, 32.0);
-		
-		vec3 specular = (NdotL_geo > 0.0) ? (spec_factor * spec_strength * light_energy) : vec3(0.0);
+    // Reconstruct Normal Vectors from standard [0, 1] texture range back to [-1, 1]
+    vec3 N = normalize(norm_rough_sample.xyz * 2.0 - 1.0);
+    vec3 N_geo = normalize(geo_metal_sample.xyz * 2.0 - 1.0);
 
-		total_direct_light += (diffuse * albedo.xyz) + specular;
-	}
+    // Clamp parameters slightly to maintain microfacet evaluation stability
+    roughness = clamp(roughness, 0.05, 1.0);
+    metallic = clamp(metallic, 0.0, 1.0);
 
-	FragColor = vec4(ambient + total_direct_light, 1.0);
+    // Camera view vector computation
+    vec3 V = normalize(u_camera_position - WP);
+    float NdotV = max(dot(N, V), 0.0);
+
+    // Surface base reflectivity (0.04 for dielectric surfaces, albedo for metal conductors)
+    vec3 F0 = mix(vec3(0.04), albedo, metallic);
+    vec3 total_direct_lighting = vec3(0.0);
+
+    // --- Step 3: Global Scene Lighting Iteration Loop ---
+    for (int i = 0; i < u_num_lights; ++i) {
+        vec3 L;
+        float attenuation = 1.0;
+
+        if (u_light_types[i] == 0) { // Point Light
+            L = u_light_positions[i] - WP;
+            float distance = length(L);
+            L = normalize(L);
+            attenuation = 1.0 / (distance * distance + 0.001);
+        } 
+        else if (u_light_types[i] == 1) { // Spot Light
+            L = u_light_positions[i] - WP;
+            float distance = length(L);
+            L = normalize(L);
+            attenuation = 1.0 / (distance * distance + 0.001);
+            
+            float light_to_pixel_angle = dot(L, normalize(u_light_directions[i] * -1.0));
+            float cosine_cutoff = 0.92; // Match spot threshold criteria boundary
+            if (light_to_pixel_angle < cosine_cutoff) {
+                attenuation = 0.0;
+            }
+        } 
+        else if (u_light_types[i] == 2) { // Directional Light
+            // FIX 1: Ensure direction vector points FROM the surface TO the light source
+            L = normalize(u_light_directions[i] * -1.0);
+            attenuation = 1.0; 
+        }
+
+        float NdotL = max(dot(N, L), 0.0);
+        
+        // FIX 2: Relax or remove the geometric normal check for directional lights
+        // Some frameworks populate out_geo_normal with unperturbed attributes that flip alignment 
+        // on flat background/infinite planes, causing NdotL_geo to evaluate to 0.0 and kill the light.
+        float NdotL_geo = (u_light_types[i] == 2) ? 1.0 : max(dot(N_geo, L), 0.0);
+
+        if (NdotL > 0.0 && NdotL_geo > 0.0) {
+            float shadow_factor = 1.0; 
+            vec3 light_radiance = u_light_colors[i] * u_light_intensities[i] * attenuation * shadow_factor;
+
+            vec3 H = normalize(V + L);
+
+            // Cook-Torrance Microfacet Evaluations
+            float D = DistributionGGX(N, H, roughness);
+            float G = GeometrySmith(N, V, L, roughness);
+            vec3 F = fresnelSchlick(max(dot(H, V), 0.0), F0);
+
+            vec3 numerator = D * G * F;
+            float denominator = 4.0 * NdotV * NdotL;
+            vec3 specular = numerator / max(denominator, 0.001); 
+
+            vec3 kS = F;
+            vec3 kD = vec3(1.0) - kS;
+            kD *= 1.0 - metallic; 
+
+            total_direct_lighting += (kD * albedo / PI + specular) * light_radiance * NdotL;
+        }
+    }
+
+    // --- Step 4: Ambient Indirect Setup ---
+    vec3 ambient = u_ambient_light * albedo * ao;
+
+    // Combine Accumulations
+    vec3 final_color = ambient + total_direct_lighting;
+
+    // Output Final Color
+    FragColor = vec4(final_color, 1.0);
 }
 
 \lightvolume.fs
@@ -720,258 +878,191 @@ FragColor = vec4(0.0, 0.0, 0.0, 1.0);
 
 #version 330 core
 
-// From basic.vs
-in vec3 v_world_position;
+// Material attributes passed from vertex shader
+in vec3 v_position;
 in vec3 v_normal;
 in vec2 v_uv;
 
-// Material uniforms
-uniform vec4 u_color;
-uniform sampler2D u_texture;
-uniform float u_roughness;
-uniform float u_alpha_cutoff;
-
-// New PBR Uniforms
-uniform sampler2D u_albedo_texture;
-uniform sampler2D u_metallic_roughness_texture;
-uniform bool u_has_metallic_roughness;
-
-// Camera uniform
+// Camera and scene variables
 uniform vec3 u_camera_position;
+uniform vec3 u_ambient_light;
 
-// Light Uniforms we just set for Assignment 2
-uniform int u_num_lights;
-uniform vec3 u_light_positions[10];
-uniform vec3 u_light_colors[10];
-uniform float u_light_intensities[10];
-uniform vec3 u_light_directions[10];
-uniform int u_light_types[10];
-uniform vec2 u_light_cones[10];
+// Material factors
+uniform vec4 u_color;
+uniform float u_metallic_factor;
+uniform float u_roughness_factor;
 
-// New Uniforms for normal mapping
+// Texture uniforms
+uniform sampler2D u_texture; // Albedo
 uniform sampler2D u_normal_texture;
+uniform sampler2D u_metallic_roughness_texture;
+
+uniform bool u_has_texture;
 uniform bool u_has_normal_map;
+uniform bool u_has_metallic_roughness_map;
 
-//Shadow map uniforms
-uniform mat4 u_light_viewprojections[4];
-uniform sampler2D u_shadow_maps[4];
-uniform bool u_cast_shadows[4];
-uniform float u_shadow_bias;
+// Uniforms for light configurations
+#define MAX_LIGHTS 4
+uniform int u_num_lights;
+uniform int u_light_types[MAX_LIGHTS];
+uniform vec3 u_light_positions[MAX_LIGHTS];
+uniform vec3 u_light_directions[MAX_LIGHTS];
+uniform vec3 u_light_colors[MAX_LIGHTS];
+uniform float u_light_intensities[MAX_LIGHTS];
 
-
-
+// Output
 out vec4 FragColor;
 
-mat3 cotangent_frame(vec3 N, vec3 p, vec2 uv)
-{
-	// get edge vectors of the pixel triangle
-	vec3 dp1 = dFdx(p);
-	vec3 dp2 = dFdy(p);
-	vec2 duv1 = dFdx(uv);
-	vec2 duv2 = dFdy(uv);
+const float PI = 3.14159265359;
 
-	// solve the linear system
-	vec3 dp2perp = cross(dp2, N);
-	vec3 dp1perp = cross(N, dp1);
-	vec3 T = dp2perp * duv1.x + dp1perp * duv2.x;
-	vec3 B = dp2perp * duv1.y + dp1perp * duv2.y;
-
-	// construct a scale-invariant frame 
-	float invmax = inversesqrt(max(dot(T, T), dot(B, B)));
-	return mat3(T * invmax, B * invmax, N);
+// 1. Trowbridge-Reitz GGX Normal Distribution Function (D)
+float DistributionGGX(vec3 N, vec3 H, float roughness) {
+    float a = roughness * roughness;
+    float a2 = a * a;
+    float NdotH = max(dot(N, H), 0.0);
+    float NdotH2 = NdotH * NdotH;
+    
+    float num = a2;
+    float denom = (NdotH2 * (a2 - 1.0) + 1.0);
+    denom = PI * denom * denom;
+    
+    return num / max(denom, 0.0001);
 }
 
-// assume N, the interpolated vertex normal and 
-// WP the world position
-vec3 perturbNormal(vec3 N, vec3 WP, vec2 uv, vec3 normal_pixel)
-{
-	mat3 TBN = cotangent_frame(N, WP, uv);
-	return normalize(TBN * normal_pixel);
+// 2. Geometry Schlick-GGX Sub-function (G1)
+float GeometrySchlickGGX(float NdotV, float roughness) {
+    float r = (roughness + 1.0);
+    float k = (r * r) / 8.0;
+
+    float num = NdotV;
+    float denom = NdotV * (1.0 - k) + k;
+    
+    return num / max(denom, 0.0001);
 }
 
+// 3. Smith's Method for Geometry Shadowing (G)
+float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness) {
+    float NdotV = max(dot(N, V), 0.0);
+    float NdotL = max(dot(N, L), 0.0);
+    float ggx2 = GeometrySchlickGGX(NdotV, roughness);
+    float ggx1 = GeometrySchlickGGX(NdotL, roughness);
+    
+    return ggx1 * ggx2;
+}
 
-void main()
-{
-	// We prepare the vectors for Phong - N, V
-	vec3 N_geo = normalize(v_normal);								// Normal vector, so direction the surface is "facing"
-	vec3 N = N_geo;
-	
-	if(u_has_normal_map)
-	{
-		// Get normal from texture (always 0 to 1 range)
-		vec3 normal_pixel = texture(u_normal_texture, v_uv).xyz;
+// 4. Fresnel Equation using Schlick's Approximation (F)
+vec3 fresnelSchlick(float cosTheta, vec3 F0) {
+    return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+}
 
-		// Remap to -1 to 1 range
-		normal_pixel = normal_pixel * 2.0 - 1.0;
+// Cotangent frame normal perturbation helper 
+mat3 cotangent_frame(vec3 N, vec3 p, vec2 uv) {
+    vec3 dp1 = dFdx(p);
+    vec3 dp2 = dFdy(p);
+    vec2 duv1 = dFdx(uv);
+    vec2 duv2 = dFdy(uv);
+    vec3 dp2perp = cross(dp2, N);
+    vec3 dp1perp = cross(N, dp1);
+    vec3 T = dp2perp * duv1.x + dp1perp * duv2.x;
+    vec3 B = dp2perp * duv1.y + dp1perp * duv2.y;
+    float invmax = inversesqrt(max(dot(T,T), dot(B,B)));
+    return mat3(T * invmax, B * invmax, N);
+}
 
-		// Perturb the geometric normal_pixel
-		//N = perturbNormal(v_normal, v_world_position, v_uv, normal_pixel);
-		N = normalize(perturbNormal(N_geo, v_world_position, v_uv, normal_pixel)
-);
-	}
-	
-	
-	vec3 V = normalize(u_camera_position - v_world_position);	// The direction from the pixel on the objects surface towards the camera.
+void main() {
+    // --- Step 1: Resolve Base Material Parameters ---
+    vec4 albedo_sample = u_has_texture ? texture(u_texture, v_uv) : vec4(1.0);
+    vec4 albedo = albedo_sample * u_color;
+    
+    float ao = 1.0;
+    float roughness = u_roughness_factor;
+    float metallic = u_metallic_factor;
+    
+    if (u_has_metallic_roughness_map) {
+        vec3 mr_sample = texture(u_metallic_roughness_texture, v_uv).rgb;
+        ao = mr_sample.r;
+        roughness = mr_sample.g;
+        metallic = mr_sample.b;
+    }
+    
+    roughness = clamp(roughness, 0.05, 1.0);
+    metallic = clamp(metallic, 0.0, 1.0);
 
-	//Prepare metallic and roughness values
-	float metallic = 0.0;
-	float roughness = u_roughness;
+    // --- Step 2: Set Up Normal & View Directions ---
+    vec3 N = normalize(v_normal);
+    if (u_has_normal_map) {
+        vec3 tangent_normal = texture(u_normal_texture, v_uv).xyz * 2.0 - 1.0;
+        mat3 TBN = cotangent_frame(N, v_position, v_uv);
+        N = normalize(TBN * tangent_normal);
+    }
+    
+    vec3 V = normalize(u_camera_position - v_position);
+    float NdotV = max(dot(N, V), 0.0);
 
-	if(u_has_metallic_roughness)
-	{
-		vec4 mr_sample = texture(u_metallic_roughness_texture, v_uv);
+    vec3 F0 = mix(vec3(0.04), albedo.rgb, metallic);
+    vec3 total_direct_lighting = vec3(0.0);
 
-		roughness = mr_sample.g;
-		metallic = mr_sample.b;
-	}
+    // --- Step 3: Direct Light Analytical Loop ---
+    for (int i = 0; i < u_num_lights; ++i) {
+        vec3 L;
+        float attenuation = 1.0;
 
-	// Get base texture color
-	vec4 albedo_sample = texture(u_albedo_texture, v_uv);					// Getting color of the texture
-	vec3 albedo = albedo_sample.rgb * u_color.rgb;				// calculating base color
+        if (u_light_types[i] == 1) { // Point Light (Notice match with your C++ framework types!)
+            L = u_light_positions[i] - v_position;
+            float distance = length(L);
+            L = normalize(L);
+            attenuation = 1.0 / (distance * distance + 0.001);
+        } 
+        else if (u_light_types[i] == 2) { // Spot Light
+            L = u_light_positions[i] - v_position;
+            float distance = length(L);
+            L = normalize(L);
+            attenuation = 1.0 / (distance * distance + 0.001);
+            
+            float light_to_pixel_angle = dot(L, normalize(u_light_directions[i] * -1.0));
+            float cosine_cutoff = 0.92; 
+            if (light_to_pixel_angle < cosine_cutoff) {
+                attenuation = 0.0;
+            }
+        } 
+        else if (u_light_types[i] == 3) { // Directional Light
+            L = normalize(u_light_directions[i] * -1.0);
+        }
+        else {
+            continue; // Unknown or disabled light type
+        }
 
-	// Alpha test
-	if(albedo_sample.a * u_color.a < u_alpha_cutoff)
-    discard;
+        vec3 H = normalize(V + L);
+        float NdotL = max(dot(N, L), 0.0);
 
-	// Ambient component 
-	vec3 ambient = albedo * 0.1; // 0.1 is adjustable but used for a low light.
+        if (NdotL > 0.0) {
+            vec3 light_radiance = u_light_colors[i] * u_light_intensities[i] * attenuation;
 
-	// Accumulator for direct light
-	vec3 total_direct_light = vec3(0.0);
+            float D = DistributionGGX(N, H, roughness);
+            float G = GeometrySmith(N, V, L, roughness);
+            vec3 F = fresnelSchlick(max(dot(H, V), 0.0), F0);
 
-	// Calculate Phong Shininess from Roughness
-	// High roughness (1.0) -> low power (dull)
-	// low roughness (0.0) -> high power (shiny)
-	// float shininess = pow(2.0, (1.0 - u_roughness) * 10.0);
+            vec3 numerator = D * G * F;
+            float denominator = 4.0 * NdotV * NdotL;
+            vec3 specular = numerator / max(denominator, 0.001);
 
-	// Loop through lights
-	for(int i = 0; i < u_num_lights; i++)
-	{
-		// as we need to switch between light types, we will only initialize a few things
-		vec3 L;
-		float attenuation = 1.0;
+            vec3 kS = F;
+            vec3 kD = vec3(1.0) - kS;
+            kD *= 1.0 - metallic;
 
-		float shadow_factor = 1.0; // Standard: no shadow
-
-        // Calculating shadow
-if(i < 4 && u_cast_shadows[i])
-{
-    // Convert world space to homogeneous space
-    vec4 light_clip_pos =
-        u_light_viewprojections[i]
-        * vec4(v_world_position, 1.0);
-
-    // Perspective division
-    vec3 proj_coords =
-        light_clip_pos.xyz / light_clip_pos.w;
-
-    // Transform from Clip Space [-1,1]
-    // to Texture Space [0,1]
-    proj_coords = proj_coords * 0.5 + 0.5;
-
-    // Only calculate when inside shadow map
-    if(proj_coords.x >= 0.0 && proj_coords.x <= 1.0 &&
-       proj_coords.y >= 0.0 && proj_coords.y <= 1.0)
-    {
-        float current_depth = proj_coords.z;
-
-        float closest_depth =
-            texture(
-                u_shadow_maps[i],
-                proj_coords.xy
-            ).r;
-
-        
-
-        if(current_depth > closest_depth + u_shadow_bias)
-        {
-            shadow_factor = 0.0;
+            total_direct_lighting += (kD * albedo.rgb / PI + specular) * light_radiance * NdotL;
         }
     }
-}
-		
-		if(u_light_types[i] == 1) // Point light
-		{
-			vec3 L_vec = u_light_positions[i] - v_world_position;
-			float dist = length(L_vec);
-			L = normalize(L_vec); // normalize after getting distance
 
-			// Attenuation (Light intensity falls off with distance squared) Works only for point lights like that
-			attenuation = 1.0 / (1.0 + dist * dist);
-		}
-		else if(u_light_types[i] == 2) // Spot light
-		{
-			vec3 L_vec = u_light_positions[i] - v_world_position;
-			float dist = length(L_vec);
-			L = normalize(L_vec);
+    // --- Step 4: Output Accumulation ---
+    vec3 ambient = u_ambient_light * albedo.rgb * ao;
+    vec3 linear_color = ambient + total_direct_lighting;
 
-			// Distance falloff is the same as Point Light
-			attenuation = 1.0 / (1.0 + dist * dist);
+    // Reinhardt Tone Mapping to turn high HDR exposures back to screen-safe ranges [0, 1]
+    vec3 mapped_color = linear_color / (linear_color + vec3(1.0));
+    
+    // Gamma Correction
+    mapped_color = pow(mapped_color, vec3(1.0 / 2.2));
 
-			// Cone Falloff
-			vec3 D = normalize(u_light_directions[i]);
-			float cos_angle = dot(D, L); //L is the direction from Light to pixel
-
-			// Interpolate between inner and outer cone
-			float spot_factor = smoothstep(u_light_cones[i].y, u_light_cones[i].x, cos_angle);
-			attenuation *= spot_factor;
-		}
-		else if(u_light_types[i] == 3) // Directional light
-		{
-			// This looks correct while executed
-
-			// L is the direction towards the light source.
-			// We negate the light's front vector.
-			L = normalize(u_light_directions[i] * -1.0);
-
-			// Directional do not attenuate
-			attenuation = 1.0;
-		}
-
-
-        // We multiply the lightenergy with shadow_factor
-        vec3 light_energy = u_light_colors[i] * u_light_intensities[i] * attenuation * shadow_factor;
-
-		// Diffuse (Lambert)
-		float NdotL = max(0.0, dot(N, L));
-		float NdotL_geo = max(0.0, dot(N_geo, L)); // Physical limit
-		vec3 diffuse = (NdotL * NdotL_geo) * light_energy;
-
-		// Specular (PBR)	
-		//Fresnel term using Schlick's approximation
-		vec3 F0 = mix(vec3(0.04), albedo, metallic); 
-
-		vec3 H = normalize(V + L);
-
-		float NdotV = max(dot(N, V), 0.0);
-		float NdotH = max(dot(N, H), 0.0);
-		float HdotV = max(dot(H, V), 0.0);
-
-
-		// Fresnel
-		vec3 F = F0 + (1.0 - F0) * pow(1.0 - HdotV, 5.0);
-
-		// Simple roughness distribution
-		float spec_power = mix(256.0, 2.0, roughness);
-		float D = pow(NdotH, spec_power);
-
-		// Geometry approximation
-		float G = NdotL * NdotV;
-
-		// Cook-Torrance
-		vec3 specular =
-			(F * D * G) /
-			max(4.0 * NdotL * NdotV, 0.001);
-
-		vec3 kd = (1.0 - F) * (1.0 - metallic);
-
-		vec3 diffuse_pbr = kd * albedo / 3.14159;
-
-		total_direct_light += (diffuse_pbr + specular) * light_energy * NdotL;
-		}
-
-			vec3 final_color = ambient + total_direct_light;
-
-		FragColor = vec4(final_color, albedo_sample.a * u_color.a);
-
+    FragColor = vec4(mapped_color, albedo.a);
 }

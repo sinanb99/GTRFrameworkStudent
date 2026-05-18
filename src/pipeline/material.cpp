@@ -123,9 +123,13 @@ void Material::bind(GFX::Shader* shader) {
 
 		//MEtallic roughness
 		GFX::Texture* mr = textures[eTextureChannel::METALLIC_ROUGHNESS].texture;
-		if (mr)
+		bool has_mr_map = (mr != nullptr);
+		shader->setUniform("u_has_metallic_roughness_map", has_mr_map);
+		if (has_mr_map) {
 			shader->setUniform("u_metallic_roughness_texture", mr, 2);
-
+		}
+		shader->setUniform("u_metallic_factor", metallic_factor);
+		shader->setUniform("u_roughness_factor", roughness_factor);
 
 		// Get normal map texture
 		GFX::Texture* normal_texture = textures[SCN::eTextureChannel::NORMALMAP].texture;
