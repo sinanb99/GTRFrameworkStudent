@@ -38,10 +38,6 @@ namespace SCN {
 		int ssao_samples = 32;
 		float ssao_radius = 0.3f;
 
-		// HDR configuration properties
-		bool use_hdr = true;
-		float hdr_exposure = 1.0f;
-
 		GFX::FBO* ssao_fbo = nullptr;
 
 		// Assignment 4 Toggle

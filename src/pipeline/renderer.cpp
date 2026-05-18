@@ -120,7 +120,7 @@ Renderer::Renderer(const char* shader_atlas_filename, int width, int height)
 
 	ssao_fbo = new GFX::FBO();
 
-	ssao_fbo->create(width, height, 1, GL_RED, GL_UNSIGNED_BYTE, false);
+	ssao_fbo->create(screen_width, screen_height, 1, GL_RED, GL_UNSIGNED_BYTE, false);
 
 	generateSSAOKernel();
 }
@@ -899,11 +899,6 @@ void Renderer::showUI()
 	ImGui::Checkbox("Enable SSAO", &use_ssao);
 	ImGui::SliderInt("SSAO Samples", &ssao_samples, 1, 64);
 	ImGui::SliderFloat("SSAO Radius", &ssao_radius, 0.01f, 2.0f);
-
-	ImGui::Separator();
-	ImGui::Text("HDR Tone Mapping");
-	ImGui::Checkbox("Enable HDR Filmic Curve", &use_hdr);
-	ImGui::SliderFloat("HDR Exposure", &hdr_exposure, 0.1f, 5.0f);
 
 	// Pipeline Switch toggle requirement
 	ImGui::Text("Pipeline Selection:");

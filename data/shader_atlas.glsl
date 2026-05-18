@@ -368,6 +368,10 @@ uniform vec3 u_light_directions[MAX_LIGHTS];
 uniform vec3 u_light_colors[MAX_LIGHTS];
 uniform float u_light_intensities[MAX_LIGHTS];
 
+// For ssao
+uniform bool u_use_ssao;
+uniform sampler2D u_ssao_texture;
+
 // Output channel
 out vec4 FragColor;
 
@@ -436,6 +440,10 @@ void main() {
     // Color/Albedo properties and embedded Material Properties
     vec3 albedo = albedo_ao_sample.rgb;
     float ao = albedo_ao_sample.a;
+    if (u_use_ssao) {
+        ao = texture(u_ssao_texture, v_uv).r;
+    }
+
     float roughness = norm_rough_sample.a;
     float metallic = geo_metal_sample.a;
 
