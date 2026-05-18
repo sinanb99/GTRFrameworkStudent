@@ -27,29 +27,6 @@ using namespace SCN;
 //some globals
 GFX::Mesh sphere;
 
-Renderer::Renderer(const char* shader_atlas_filename)
-{
-	render_wireframe = false;
-	render_boundaries = false;
-	render_mode = SINGLE_PASS; // Initialize it to single pass by default
-	scene = nullptr;
-	skybox_cubemap = nullptr;
-
-	if (!GFX::Shader::LoadAtlas(shader_atlas_filename))
-		exit(1);
-	GFX::checkGLErrors();
-
-	sphere.createSphere(1.0f);
-	sphere.uploadToVRAM();
-}
-
-void Renderer::setupScene()
-{
-	if (scene->skybox_filename.size())
-		skybox_cubemap = GFX::Texture::Get(std::string(scene->base_folder + "/" + scene->skybox_filename).c_str());
-	else
-		skybox_cubemap = nullptr;
-}
 
 // This is our struct that describes the renderables. 
 struct sRenderable
@@ -66,6 +43,41 @@ std::vector<sRenderable> transparent_list; // See through things, ordered the ot
 
 // Phong Lighting
 std::vector<LightEntity*> lights_list;
+
+
+Renderer::Renderer(const char* shader_atlas_filename, int width, int height)
+{
+	render_wireframe = false;
+	render_boundaries = false;
+	render_mode = SINGLE_PASS; // Initialize it to single pass by default
+	scene = nullptr;
+	skybox_cubemap = nullptr;
+	screen_width = width;
+	screen_height = height;
+
+	if (!GFX::Shader::LoadAtlas(shader_atlas_filename))
+		exit(1);
+	GFX::checkGLErrors();
+
+	sphere.createSphere(1.0f);
+	sphere.uploadToVRAM();
+
+	// G-Buffer: color target 0 = albedo, color target 1 = packed normals
+	gbuffer_fbo = new GFX::FBO();
+	gbuffer_fbo->create(width, height, 2, GL_RGBA, GL_UNSIGNED_BYTE, true);
+
+	// Light FBO
+	light_fbo = new GFX::FBO();
+	light_fbo->create(width, height, 1, GL_RGBA, GL_UNSIGNED_BYTE, true);
+}
+
+void Renderer::setupScene()
+{
+	if (scene->skybox_filename.size())
+		skybox_cubemap = GFX::Texture::Get(std::string(scene->base_folder + "/" + scene->skybox_filename).c_str());
+	else
+		skybox_cubemap = nullptr;
+}
 
 /** * Recursively flattens the scene hierarchy into a linear render list.
  * Transforms local node coordinates into World Space for the GPU.
