@@ -5,6 +5,9 @@ skybox basic.vs skybox.fs
 depth quad.vs depth.fs
 multi basic.vs multi.fs
 lighting basic.vs lighting.fs
+gbuffer basic.vs gbuffer.fs
+deferred quad.vs deferred.fs
+lightvolume basic.vs lightvolume.fs
 
 \perturbNormal
 
@@ -207,6 +210,31 @@ void main()
 		FragColor = vec4(z);
 	else
 		FragColor = vec4( n * (z + 1.0) / (f + n - z * (f - n)) );
+}
+
+\gbuffer.fs
+#version 330 core
+in vec3 v_position;
+in vec3 v_world_position;
+in vec3 v_normal;
+in vec2 v_uv;
+in vec4 v_color;
+
+uniform vec4 u_color;
+uniform sampler2D u_texture;
+uniform float u_alpha_cutoff;
+
+layout(location = 0) out vec4 out_albedo;
+layout(location = 1) out vec4 out_normal;
+
+void main()
+{
+	vec4 color = u_color * texture(u_texture, v_uv);
+	if (color.a < u_alpha_cutoff) discard;
+
+	vec3 N = normalize(v_normal);
+	out_albedo = color;
+	out_normal = vec4(N * 0.5 + 0.5, 1.0); // Pack matching normal data [-1,1] -> [0,1]
 }
 
 
