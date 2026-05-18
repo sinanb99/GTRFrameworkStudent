@@ -11,6 +11,7 @@ lighting_PBR basic.vs lighting_PBR.fs
 gbuffer basic.vs gbuffer.fs
 deferred quad.vs deferred.fs
 lightvolume basic.vs lightvolume.fs
+ssao quad.vs ssao.fs
 
 \pbr_math
 const float PI = 3.14159265359;
@@ -367,6 +368,10 @@ uniform vec3 u_light_directions[MAX_LIGHTS];
 uniform vec3 u_light_colors[MAX_LIGHTS];
 uniform float u_light_intensities[MAX_LIGHTS];
 
+// For ssao
+uniform bool u_use_ssao;
+uniform sampler2D u_ssao_texture;
+
 // Output channel
 out vec4 FragColor;
 
@@ -435,6 +440,10 @@ void main() {
     // Color/Albedo properties and embedded Material Properties
     vec3 albedo = albedo_ao_sample.rgb;
     float ao = albedo_ao_sample.a;
+    if (u_use_ssao) {
+        ao = texture(u_ssao_texture, v_uv).r;
+    }
+
     float roughness = norm_rough_sample.a;
     float metallic = geo_metal_sample.a;
 
@@ -1065,4 +1074,84 @@ void main() {
     mapped_color = pow(mapped_color, vec3(1.0 / 2.2));
 
     FragColor = vec4(mapped_color, albedo.a);
+}
+
+\ssao.fs
+#version 330 core
+
+in vec2 v_uv;
+out float FragColor;
+
+uniform sampler2D u_normal_texture;
+uniform sampler2D u_depth_texture;
+
+uniform mat4 u_viewprojection;
+uniform mat4 u_inverse_viewprojection;
+
+uniform vec3 u_samples[64];
+uniform int u_num_samples;
+uniform float u_radius;
+
+void main() {
+    // 1. Reconstruct current pixel's World Space position from Depth Buffer
+    float depth = texture(u_depth_texture, v_uv).r;
+    if (depth == 1.0) {
+        FragColor = 1.0; // Skybox background remains fully unoccluded
+        return;
+    }
+    
+    // Transform coordinates from Screen UV space back to World Coordinates
+    vec4 clip_space_pos = vec4(v_uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+    vec4 world_space_pos = u_inverse_viewprojection * clip_space_pos;
+    vec3 world_pos = world_space_pos.xyz / world_space_pos.w;
+
+    // 2. Fetch the G-Buffer world normal
+    vec3 N = texture(u_normal_texture, v_uv).xyz * 2.0 - 1.0;
+    N = normalize(N);
+
+    // --- Step 2.4.1: Building the Per-Pixel Hemisphere Rotation TBN Matrix ---
+    // Generate a quick per-pixel random pseudo-vector based on screen coordinates
+    vec3 random_dir = normalize(vec3(sin(gl_FragCoord.x * 12.9898), cos(gl_FragCoord.y * 78.233), 0.0));
+    vec3 T = normalize(random_dir - N * dot(random_dir, N));
+    vec3 B = cross(N, T);
+    mat3 rotmat = mat3(T, B, N);
+
+    float occlusion = 0.0;
+    int samples_checked = 0;
+
+    // 3. Direct Loop sampling over kernel array
+    for (int i = 0; i < u_num_samples; ++i) {
+        // Rotate hemisphere position to point cleanly outward relative to surface normal orientation
+        vec3 sample_offset = rotmat * u_samples[i];
+        vec3 sample_world_pos = world_pos + (sample_offset * u_radius);
+
+        // Project the 3D offset point back onto the 2D view screen coordinate coordinates
+        vec4 sample_projected = u_viewprojection * vec4(sample_world_pos, 1.0);
+        vec3 sample_ndc = sample_projected.xyz / sample_projected.w;
+        vec2 sample_screen_uv = sample_ndc.xy * 0.5 + 0.5;
+
+        // Clip checks to guarantee target coordinate lands inside the current display window bounds
+        if (sample_screen_uv.x >= 0.0 && sample_screen_uv.x <= 1.0 && sample_screen_uv.y >= 0.0 && sample_screen_uv.y <= 1.0) {
+            samples_checked++;
+
+            // Extract the true geometric depth present at the projected location
+            float real_buffer_depth = texture(u_depth_texture, sample_screen_uv).r;
+            vec4 real_clip = vec4(sample_screen_uv * 2.0 - 1.0, real_buffer_depth * 2.0 - 1.0, 1.0);
+            vec4 real_world = u_inverse_viewprojection * real_clip;
+            vec3 real_world_pos = real_world.xyz / real_world.w;
+
+            // --- Step 2.8: Range Checking (Included here for proper artifact prevention) ---
+            float range_check = smoothstep(0.0, 1.0, u_radius / abs(world_pos.z - real_world_pos.z));
+
+            // Compare the Z depths. If the real surface position is closer to the camera 
+            // than our sample point, then our sample point is hidden inside geometry (occluded)
+            if (real_world_pos.z > sample_world_pos.z + 0.005) {
+                occlusion += 1.0 * range_check;
+            }
+        }
+    }
+
+    // Average the collected samples to calculate our final occlusion multiplier
+    float ao_factor = 1.0 - (occlusion / float(max(samples_checked, 1)));
+    FragColor = clamp(ao_factor, 0.0, 1.0);
 }

@@ -117,6 +117,12 @@ Renderer::Renderer(const char* shader_atlas_filename, int width, int height)
 		shadow_fbos[i]->setDepthOnly(1024, 1024);
 	}
 	light_camera = new Camera();
+
+	ssao_fbo = new GFX::FBO();
+
+	ssao_fbo->create(screen_width, screen_height, 1, GL_RED, GL_UNSIGNED_BYTE, false);
+
+	generateSSAOKernel();
 }
 
 void Renderer::setupScene()
@@ -236,6 +242,32 @@ void Renderer::parseSceneEntities(SCN::Scene* scene, Camera* cam) {
 void Renderer::renderDeferred(SCN::Scene* scene, Camera* camera)
 {
 	renderGBuffer(camera);
+
+	if (use_ssao) {
+		ssao_fbo->bind();
+		glClearColor(1.0f, 1.0f, 1.0f, 1.0f); // Default to full light intensity
+		glClear(GL_COLOR_BUFFER_BIT);
+
+		GFX::Shader* ssao_shader = GFX::Shader::Get("ssao");
+		if (ssao_shader) {
+			ssao_shader->enable();
+			ssao_shader->setUniform("u_normal_texture", gbuffer_fbo->color_textures[1], 1);
+			ssao_shader->setUniform("u_depth_texture", gbuffer_fbo->depth_texture, 2);
+
+			ssao_shader->setUniform("u_viewprojection", camera->viewprojection_matrix);
+			ssao_shader->setUniform("u_inverse_viewprojection", camera->inverse_viewprojection_matrix);
+			ssao_shader->setUniform("u_num_samples", ssao_samples);
+			ssao_shader->setUniform("u_radius", ssao_radius);
+			ssao_shader->setUniform3Array("u_samples", (float*)ssao_kernel.data(), ssao_kernel.size());
+
+			GFX::Mesh* quad = GFX::Mesh::getQuad();
+			quad->render(GL_TRIANGLES);
+			ssao_shader->disable();
+		}
+		ssao_fbo->unbind();
+	}
+
+
 	renderDeferredAmbientAndDirectional(camera);
 	renderLightVolumes(camera);
 	renderTransparencies(camera);
@@ -421,6 +453,11 @@ void Renderer::renderDeferredAmbientAndDirectional(Camera* camera)
 	shader->setUniform("u_camera_position", camera->eye);
 	shader->setUniform("u_shadow_bias", shadow_bias);
 
+	// Pass SSAO properties down to the deferred shader
+	shader->setUniform("u_use_ssao", (int)use_ssao);
+	if (use_ssao) {
+		shader->setUniform("u_ssao_texture", ssao_fbo->color_textures[0], 5);
+	}
 
 	// Group and pass directional light vectors down
 	uploadLights(shader, lights_list);
@@ -833,9 +870,36 @@ void Renderer::renderShadowMap(SCN::Scene* scene)
 	glActiveTexture(GL_TEXTURE0);
 }
 
+void Renderer::generateSSAOKernel() {
+	ssao_kernel.clear();
+	for (int i = 0; i < 64; ++i) {
+		//Generate coordinates filling a hemisphere facing along the +Z
+		Vector3f sample_point(
+			((float)rand() / RAND_MAX) * 2.0f - 1.0f,
+			((float)rand() / RAND_MAX) * 2.0f - 1.0f,
+			((float)rand() / RAND_MAX)
+		);
+
+		sample_point = sample_point.normalize();
+
+		// Scale factor
+		float scale = (float)i / 64.0f;
+		scale = 0.1f + 0.9f * (scale * scale);
+		sample_point = sample_point * scale;
+
+		ssao_kernel.push_back(sample_point);
+	}
+}
+
 #ifndef SKIP_IMGUI
 void Renderer::showUI()
 {
+	ImGui::Separator();
+	ImGui::Text("SSAO + Settings");
+	ImGui::Checkbox("Enable SSAO", &use_ssao);
+	ImGui::SliderInt("SSAO Samples", &ssao_samples, 1, 64);
+	ImGui::SliderFloat("SSAO Radius", &ssao_radius, 0.01f, 2.0f);
+
 	// Pipeline Switch toggle requirement
 	ImGui::Text("Pipeline Selection:");
 	ImGui::Checkbox("Use Deferred Renderer", &use_deferred);
