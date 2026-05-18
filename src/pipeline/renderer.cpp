@@ -667,8 +667,13 @@ void Renderer::renderMeshWithMaterial(const Matrix44 model, GFX::Mesh* mesh, SCN
 
 	glEnable(GL_DEPTH_TEST);
 
-	// Choose our forward shader
-	shader = GFX::Shader::Get("lighting");
+	//chose a shader
+
+	// FOR TESTING WE CAN TURN THIS ON AGAIN
+	//shader = GFX::Shader::Get("texture");
+	
+	// For Assignment 2, we are changing this to lighting!
+	shader = GFX::Shader::Get("lighting_PBR");
 
 	assert(glGetError() == GL_NO_ERROR);
 

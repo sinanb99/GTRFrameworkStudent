@@ -104,6 +104,29 @@ void Material::bind(GFX::Shader* shader) {
 		if (albedo_texture)
 			shader->setUniform("u_texture", albedo_texture, 0);
 
+		//Load Textures for PBR
+		// Currently overwriting older ids
+		//Albedo
+		GFX::Texture* albedo = textures[eTextureChannel::ALBEDO].texture;
+		if (!albedo) albedo = GFX::Texture::getWhiteTexture();
+
+		shader->setUniform("u_albedo_texture", albedo, 0);
+
+		//Normal
+		GFX::Texture* normal = textures[eTextureChannel::NORMALMAP].texture;
+		bool has_normal = (normal != nullptr);
+
+		shader->setUniform("u_has_normal_map", has_normal);
+
+		if (has_normal)
+			shader->setUniform("u_normal_texture", normal, 1);
+
+		//MEtallic roughness
+		GFX::Texture* mr = textures[eTextureChannel::METALLIC_ROUGHNESS].texture;
+		if (mr)
+			shader->setUniform("u_metallic_roughness_texture", mr, 2);
+
+
 		// Get normal map texture
 		GFX::Texture* normal_texture = textures[SCN::eTextureChannel::NORMALMAP].texture;
 

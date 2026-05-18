@@ -70,10 +70,8 @@ namespace SCN {
 
 		// And declare the method:
 		void renderShadowMap(SCN::Scene* scene);
-		std::vector<SCN::LightEntity*> lights_list; // We create a list of lights, so we can work through all the lights we get (Need to be a lightentity obviously)
 
 		//updated every frame
-		Renderer(const char* shaders_atlas_filename);
 
 		//just to be sure we have everything ready for the rendering
 		void setupScene();
