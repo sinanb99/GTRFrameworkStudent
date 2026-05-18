@@ -249,29 +249,45 @@ uniform mat4 u_inverse_viewprojection;
 uniform vec3 u_ambient_light;
 uniform vec3 u_camera_position;
 
-// Match original arrays inside uploadLights definitions
-uniform vec3 u_light_positions[5];
-uniform vec3 u_light_colors[5];
+// Match the full array sizing from your C++ uploadLights method
+uniform int u_num_lights;
+uniform vec3 u_light_positions[10];
+uniform vec3 u_light_colors[10];
+uniform float u_light_intensities[10];
+uniform vec3 u_light_directions[10];
+uniform int u_light_types[10];
 
 out vec4 FragColor;
 
 void main()
 {
+	float depth = texture(u_depth_texture, v_uv).x;
+	if (depth >= 1.0) discard; // Don't light the skybox area!
+
 	vec4 albedo = texture(u_color_texture, v_uv);
 	vec3 normal_packed = texture(u_normal_texture, v_uv).xyz;
 	vec3 N = normalize(normal_packed * 2.0 - 1.0);
-	float depth = texture(u_depth_texture, v_uv).x;
 
-	// Reconstruct 3D Position vector from full screen coordinate
+	// Reconstruct 3D Position vector from screen space coordinates
 	vec4 screen_pos = vec4(v_uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
 	vec4 world_pos = u_inverse_viewprojection * screen_pos;
 	vec3 WP = world_pos.xyz / world_pos.w;
 
-	// Base Ambient Component calculation 
+	// Calculate baseline ambient lighting
 	vec3 illumination = albedo.xyz * u_ambient_light;
 
-	// Perform calculations for directional lights here if applicable
-	FragColor = vec4(illumination, albedo.a);
+	// Process all global directional lights in this pass
+	for(int i = 0; i < u_num_lights; i++)
+	{
+		if(u_light_types[i] == 3) // Directional Light
+		{
+			vec3 L = normalize(u_light_directions[i] * -1.0);
+			float NdotL = max(0.0, dot(N, L));
+			illumination += albedo.xyz * u_light_colors[i] * u_light_intensities[i] * NdotL;
+		}
+	}
+
+	FragColor = vec4(illumination, 1.0);
 }
 
 \lightvolume.fs
@@ -284,37 +300,52 @@ uniform mat4 u_inverse_viewprojection;
 uniform vec3 u_camera_position;
 uniform vec2 u_screen_size;
 
-// Targeted light configuration properties
-uniform vec3 u_light_position;
-uniform vec3 u_light_color;
-uniform float u_light_max_dist;
+// These MUST be arrays of size 1 to receive data from uploadLights!
+uniform vec3 u_light_positions[1];
+uniform vec3 u_light_colors[1];
+uniform float u_light_intensities[1];
+uniform vec3 u_light_directions[1];
+uniform int u_light_types[1];
+uniform vec2 u_light_cones[1];
 
 out vec4 FragColor;
 
 void main()
 {
-	// Translate gl_FragCoord to specific viewport UV mappings
 	vec2 uv = gl_FragCoord.xy / u_screen_size;
+
+	float depth = texture(u_depth_texture, uv).x;
+	if (depth >= 1.0) discard;
 
 	vec4 albedo = texture(u_color_texture, uv);
 	vec3 normal_packed = texture(u_normal_texture, uv).xyz;
 	vec3 N = normalize(normal_packed * 2.0 - 1.0);
-	float depth = texture(u_depth_texture, uv).x;
 
 	vec4 screen_pos = vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
 	vec4 world_pos = u_inverse_viewprojection * screen_pos;
 	vec3 WP = world_pos.xyz / world_pos.w;
 
-	// Point light calculation logic
-	vec3 L = u_light_position - WP;
-	float dist = length(L);
-	if (dist > u_light_max_dist) discard;
+	// Point & Spot Light Vector Math
+	vec3 L_vec = u_light_positions[0] - WP;
+	float dist = length(L_vec);
+	vec3 L = normalize(L_vec);
 
-	L = normalize(L);
+	// Quadratic Attenuation (Matches your forward pipeline lighting.fs perfectly)
+	float attenuation = 1.0 / (1.0 + dist * dist);
+
+	// If it's a Spot Light, apply the cone calculations
+	if(u_light_types[0] == 2)
+	{
+		vec3 D = normalize(u_light_directions[0]);
+		float cos_angle = dot(D, L);
+		float spot_factor = smoothstep(u_light_cones[0].y, u_light_cones[0].x, cos_angle);
+		attenuation *= spot_factor;
+	}
+
 	float NdotL = max(dot(N, L), 0.0);
-	float attenuation = max(0.0, 1.0 - (dist / u_light_max_dist));
+	vec3 light_energy = u_light_colors[0] * u_light_intensities[0] * attenuation;
+	vec3 lighting = albedo.xyz * light_energy * NdotL;
 
-	vec3 lighting = u_light_color * NdotL * attenuation * albedo.xyz;
 	FragColor = vec4(lighting, 1.0);
 }
 
