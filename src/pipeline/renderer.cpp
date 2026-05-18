@@ -278,6 +278,118 @@ void Renderer::renderGBuffer(Camera* camera)
 	gbuffer_fbo->unbind();
 }
 
+void Renderer::renderDeferredAmbientAndDirectional(Camera* camera)
+{
+	// Blending and depth for the base pass mapping inside the light_fbo
+	gbuffer_fbo->depth_texture->copyTo(light_fbo->depth_texture);
+
+	light_fbo->bind();
+	glClearColor(scene->background_color.x, scene->background_color.y, scene->background_color.z, 1.0f);
+	glClear(GL_COLOR_BUFFER_BIT);
+
+	if (skybox_cubemap) renderSkybox(skybox_cubemap);
+
+	glDisable(GL_DEPTH_TEST);
+	glDepthMask(GL_FALSE);
+	glDisable(GL_BLEND);
+
+	GFX::Shader* shader = GFX::Shader::Get("deferred");
+	if (!shader) {
+		light_fbo->unbind();
+		return;
+	}
+
+	shader->enable();
+
+	// Bind depth map and properties for screen-space coordinate evaluations
+	gbuffer_fbo->color_textures[0]->bind(0);
+	shader->setUniform("u_color_texture", 0);
+	gbuffer_fbo->color_textures[1]->bind(1);
+	shader->setUniform("u_normal_texture", 1);
+	gbuffer_fbo->depth_texture->bind(2);
+	shader->setUniform("u_depth_texture", 2);
+
+	shader->setUniform("u_inverse_viewprojection", camera->inverse_viewprojection_matrix);
+	shader->setUniform("u_ambient_light", scene->ambient_light);
+	shader->setUniform("u_camera_position", camera->eye);
+
+	// Group and pass directional light vectors down
+	std::vector<LightEntity*> dir_lights;
+	for (auto* l : lights_list) {
+		if (l->light_type == eLightType::DIRECTIONAL) dir_lights.push_back(l);
+	}
+	uploadLights(shader, dir_lights);
+
+	GFX::Mesh* quad = GFX::Mesh::getQuad();
+	quad->render(GL_TRIANGLES);
+
+	shader->disable();
+	light_fbo->unbind();
+}
+
+void Renderer::renderLightVolumes(Camera* camera)
+{
+	light_fbo->bind();
+
+	// Explicitly target localized intersection testing using depth states
+	glEnable(GL_DEPTH_TEST);
+	glDepthFunc(GL_GREATER);
+	glDepthMask(GL_FALSE);
+
+	glEnable(GL_BLEND);
+	glBlendFunc(GL_ONE, GL_ONE); // Pure Additive Blending 
+
+	glEnable(GL_CULL_FACE);
+	glCullFace(GL_FRONT); // Rasterize backfaces inside volume coordinates
+
+	GFX::Shader* shader = GFX::Shader::Get("lightvolume");
+	if (!shader) {
+		glDepthFunc(GL_LESS);
+		glDisable(GL_BLEND);
+		glCullFace(GL_BACK);
+		light_fbo->unbind();
+		return;
+	}
+
+	shader->enable();
+
+	gbuffer_fbo->color_textures[0]->bind(0);
+	shader->setUniform("u_color_texture", 0);
+	gbuffer_fbo->color_textures[1]->bind(1);
+	shader->setUniform("u_normal_texture", 1);
+	gbuffer_fbo->depth_texture->bind(2);
+	shader->setUniform("u_depth_texture", 2);
+
+	shader->setUniform("u_inverse_viewprojection", camera->inverse_viewprojection_matrix);
+	shader->setUniform("u_camera_position", camera->eye);
+	shader->setUniform("u_screen_size", vec2((float)screen_width, (float)screen_height));
+
+	for (auto* light : lights_list) {
+		if (light->light_type == eLightType::DIRECTIONAL) continue;
+
+		// Frame light arrays down individually for localized intersections
+		std::vector<LightEntity*> single_light = { light };
+		uploadLights(shader, single_light);
+
+		Matrix44 model;
+		model.setTranslation(light->model.getTranslation());
+		model.scale(light->max_distance, light->max_distance, light->max_distance);
+		shader->setUniform("u_model", model);
+		shader->setUniform("u_viewprojection", camera->viewprojection_matrix);
+
+		sphere.render(GL_TRIANGLES);
+	}
+
+	shader->disable();
+
+	// Standardize pipeline settings out to default 
+	glDepthFunc(GL_LESS);
+	glDepthMask(GL_TRUE);
+	glDisable(GL_BLEND);
+	glCullFace(GL_BACK);
+	light_fbo->unbind();
+}
+
 
 void Renderer::renderSkybox(GFX::Texture* cubemap)
 {
