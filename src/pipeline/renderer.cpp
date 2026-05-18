@@ -117,6 +117,12 @@ Renderer::Renderer(const char* shader_atlas_filename, int width, int height)
 		shadow_fbos[i]->setDepthOnly(1024, 1024);
 	}
 	light_camera = new Camera();
+
+	ssao_fbo = new GFX::FBO();
+
+	ssao_fbo->create(width, height, 1, GL_RED, GL_UNSIGNED_BYTE, false);
+
+	generateSSAOKernel();
 }
 
 void Renderer::setupScene()
@@ -831,6 +837,27 @@ void Renderer::renderShadowMap(SCN::Scene* scene)
 	}
 
 	glActiveTexture(GL_TEXTURE0);
+}
+
+void Renderer::generateSSAOKernel() {
+	ssao_kernel.clear();
+	for (int i = 0; i < 64; ++i) {
+		//Generate coordinates filling a hemisphere facing along the +Z
+		Vector3f sample_point(
+			((float)rand() / RAND_MAX) * 2.0f - 1.0f,
+			((float)rand() / RAND_MAX) * 2.0f - 1.0f,
+			((float)rand() / RAND_MAX)
+		);
+
+		sample_point = sample_point.normalize();
+
+		// Scale factor
+		float scale = (float)i / 64.0f;
+		scale = 0.1f + 0.9f * (scale * scale);
+		sample_point = sample_point * scale;
+
+		ssao_kernel.push_back(sample_point);
+	}
 }
 
 #ifndef SKIP_IMGUI
