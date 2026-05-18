@@ -57,10 +57,6 @@ using namespace SCN;
 // Look at extra assignments for a better grade. 
 //
 
-
-
-
-
 //some globals
 GFX::Mesh sphere;
 
@@ -130,22 +126,6 @@ void Renderer::setupScene()
 	else
 		skybox_cubemap = nullptr;
 }
-
-// This is our struct that describes the renderables. 
-struct sRenderable
-{
-	GFX::Mesh* mesh; // Pointer to the Vertex, or Index Buffer. This is the "what" of the object (3D coordiantes, normals,...)
-	SCN::Material* material; // This defines Shaders and Textures, tells GPU how to interpret light, color, and roughness
-	Matrix44 model; // The transfomration to move from object space to world space
-	float distance = 0.0f; // If the material is see-through, we must order by distance. (Z-Direction)
-};
-
-std::vector<sRenderable> render_list; // render_list that includes everything that is to be rendered.
-std::vector<sRenderable> opaque_list; // only not see through things
-std::vector<sRenderable> transparent_list; // See through things, ordered the other way around
-
-// Phong Lighting
-std::vector<LightEntity*> lights_list;
 
 /** * Recursively flattens the scene hierarchy into a linear render list.
  * Transforms local node coordinates into World Space for the GPU.
@@ -279,13 +259,15 @@ void Renderer::renderScene(SCN::Scene* scene, Camera* camera)
 
 	parseSceneEntities(scene, camera);
 
+	renderShadowMap(scene);
+
 	if (use_deferred)
 		renderDeferred(scene, camera);
 	else
 	{
 		renderForward(scene, camera);
 	}
-} // NEED TO REMOVE THIS SOON FOR TESTING
+} 
 
 void Renderer::renderForward(SCN::Scene * scene, Camera * camera) {
 
@@ -339,7 +321,6 @@ void Renderer::renderGBuffer(Camera* camera)
 	glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-	glEnable(GL_DEPTH_TEST);
 	glDepthMask(GL_TRUE);
 	glDisable(GL_BLEND);
 	glEnable(GL_CULL_FACE);
@@ -376,10 +357,10 @@ void Renderer::renderGBuffer(Camera* camera)
 		GFX::Texture* normal_tex = call.material->textures[SCN::eTextureChannel::NORMALMAP].texture;
 		if (normal_tex) {
 			shader->setUniform("u_normal_texture", normal_tex, 1); // Bind normal map to texture unit 1
-			shader->setUniform("u_has_normal_map", true);
+			shader->setUniform("u_has_normal_map", (int)1);
 		}
 		else {
-			shader->setUniform("u_has_normal_map", false);
+			shader->setUniform("u_has_normal_map", (int)(0));
 		}
 
 		// Handle two-sided rendering if specified by the material
@@ -404,6 +385,9 @@ void Renderer::renderDeferredAmbientAndDirectional(Camera* camera)
 	glClearColor(scene->background_color.x, scene->background_color.y, scene->background_color.z, 1.0f);
 	glClear(GL_COLOR_BUFFER_BIT);
 
+	
+	glEnable(GL_DEPTH_TEST);
+	glDepthFunc(GL_LEQUAL);
 	if (skybox_cubemap) renderSkybox(skybox_cubemap);
 
 	glDisable(GL_DEPTH_TEST);
@@ -428,6 +412,7 @@ void Renderer::renderDeferredAmbientAndDirectional(Camera* camera)
 	shader->setUniform("u_inverse_viewprojection", camera->inverse_viewprojection_matrix);
 	shader->setUniform("u_ambient_light", scene->ambient_light);
 	shader->setUniform("u_camera_position", camera->eye);
+	shader->setUniform("u_shadow_bias", shadow_bias);
 
 	// Group and pass directional light vectors down
 	std::vector<LightEntity*> dir_lights;
@@ -436,8 +421,30 @@ void Renderer::renderDeferredAmbientAndDirectional(Camera* camera)
 	}
 	uploadLights(shader, dir_lights);
 
+	// Bind shadow maps for directional
+	for (int i = 0; i < dir_lights.size(); ++i) {
+		if (i >= 4) break;
+
+		if (shadow_fbos[i] && shadow_fbos[i]->depth_texture) {
+			std::string vp_name = "u_light_viewprojections[" + std::to_string(i) + "]";
+			std::string sm_name = "u_shadow_maps[" + std::to_string(i) + "]";
+			std::string cast_name = "u_cast_shadows[" + std::to_string(i) + "]";
+
+			shader->setUniform(vp_name.c_str(), light_viewprojections[i]);
+			shader->setUniform(sm_name.c_str(), shadow_fbos[i]->depth_texture, 4 + i);
+			shader->setUniform(cast_name.c_str(), (int)dir_lights[i]->cast_shadows);
+		}
+	}
+
 	GFX::Mesh* quad = GFX::Mesh::getQuad();
 	quad->render(GL_TRIANGLES);
+
+	for (int i = 0; i < 4; ++i) {
+		glActiveTexture(GL_TEXTURE4 + i);
+		glBindTexture(GL_TEXTURE_2D, 0);
+	}
+	glActiveTexture(GL_TEXTURE0); // Return to safe default
+	
 
 	shader->disable();
 	light_fbo->unbind();
@@ -469,7 +476,6 @@ void Renderer::renderLightVolumes(Camera* camera)
 
 	shader->enable();
 
-	shader->enable();
 	shader->setUniform("u_color_texture", gbuffer_fbo->color_textures[0], 0);
 	shader->setUniform("u_normal_texture", gbuffer_fbo->color_textures[1], 1);
 	shader->setUniform("u_depth_texture", gbuffer_fbo->depth_texture, 2);
@@ -478,13 +484,25 @@ void Renderer::renderLightVolumes(Camera* camera)
 	shader->setUniform("u_inverse_viewprojection", camera->inverse_viewprojection_matrix);
 	shader->setUniform("u_camera_position", camera->eye);
 	shader->setUniform("u_screen_size", vec2((float)screen_width, (float)screen_height));
+	shader->setUniform("u_shadow_bias", shadow_bias);
 
-	for (auto* light : lights_list) {
+	// Track true indices to assign proper shadow attachments
+	for (int light_idx = 0; light_idx < lights_list.size(); ++light_idx) {
+		auto* light = lights_list[light_idx];
 		if (light->light_type == eLightType::DIRECTIONAL) continue;
 
-		// Frame light arrays down individually for localized intersections
 		std::vector<LightEntity*> single_light = { light };
 		uploadLights(shader, single_light);
+
+		// --- BIND SINGLE ACTIVE SHADOW RESOURCE FOR THIS VOLUME ---
+		if (light_idx < 4 && light->cast_shadows && shadow_fbos[light_idx]) {
+			shader->setUniform("u_light_viewprojection", light_viewprojections[light_idx]);
+			shader->setUniform("u_shadow_map", shadow_fbos[light_idx]->depth_texture, 8); // Bind to Unit 8
+			shader->setUniform("u_cast_shadows", (int)true);
+		}
+		else {
+			shader->setUniform("u_cast_shadows", (int)false);
+		}
 
 		Matrix44 light_model = light->root.getGlobalMatrix();
 		Vector3f light_pos = light_model.getTranslation();
@@ -500,9 +518,12 @@ void Renderer::renderLightVolumes(Camera* camera)
 		sphere.render(GL_TRIANGLES);
 	}
 
+	glActiveTexture(GL_TEXTURE8);
+	glBindTexture(GL_TEXTURE_2D, 0);
+	glActiveTexture(GL_TEXTURE0); // Return to safe default
+
 	shader->disable();
 
-	// Standardize pipeline settings out to default 
 	glDepthFunc(GL_LESS);
 	glDepthMask(GL_TRUE);
 	glDisable(GL_BLEND);
@@ -575,6 +596,7 @@ void Renderer::renderSkybox(GFX::Texture* cubemap)
 // We create a private helper function for our lights to use in both single and multipass
 void Renderer::uploadLights(GFX::Shader* shader, const std::vector<LightEntity*>& lights)
 {
+	if (!shader || lights.empty()) return;
 
 	/*
 	* We initialize all our lists.
@@ -607,20 +629,26 @@ void Renderer::uploadLights(GFX::Shader* shader, const std::vector<LightEntity*>
 		cones.push_back(vec2(cos_inner, cos_outer));
 	}
 
-
-	// upload the shader uniforms so we can use them in the shader.
+	if (shader == GFX::Shader::Get("lighting") || shader == GFX::Shader::Get("deferred") || shader == GFX::Shader::Get("lightvolume"))
+	{
+		shader->setUniform("u_num_lights", (int)positions.size());
+		if (!positions.empty()) {
+			// upload the shader uniforms so we can use them in the shader.
 	// According to gemini it might be faster if we do this in renderScene instead of every Mesh. (keep in mind if we need better efficiency)
-	shader->setUniform("u_num_lights", (int)positions.size());										//set a uniform for the amount of lights existing
-	shader->setUniform3Array("u_light_positions", (float*)positions.data(), positions.size());  //set a uniform to access light positions
-	shader->setUniform3Array("u_light_colors", (float*)colors.data(), positions.size());		//set a uniform to access light colors 
-	shader->setUniform1Array("u_light_intensities", intensities.data(), positions.size());		//set a uniform to access light intensities
+			shader->setUniform("u_num_lights", (int)positions.size());										//set a uniform for the amount of lights existing
+			shader->setUniform3Array("u_light_positions", (float*)positions.data(), positions.size());  //set a uniform to access light positions
+			shader->setUniform3Array("u_light_colors", (float*)colors.data(), positions.size());		//set a uniform to access light colors 
+			shader->setUniform1Array("u_light_intensities", intensities.data(), positions.size());		//set a uniform to access light intensities
 
-	// Different types for shader
-	shader->setUniform3Array("u_light_directions", (float*)directions.data(), directions.size()); //set directional information
-	shader->setUniform1Array("u_light_types", (int*)types.data(), types.size());
+			// Different types for shader
+			shader->setUniform3Array("u_light_directions", (float*)directions.data(), directions.size()); //set directional information
+			shader->setUniform1Array("u_light_types", (int*)types.data(), types.size());
 
-	// For Spotlights, we set the uniform for the cones here
-	shader->setUniform2Array("u_light_cones", (float*)cones.data(), cones.size());
+			// For Spotlights, we set the uniform for the cones here
+			shader->setUniform2Array("u_light_cones", (float*)cones.data(), cones.size());
+
+		}
+	}
 
 }
 
@@ -628,33 +656,28 @@ void Renderer::uploadLights(GFX::Shader* shader, const std::vector<LightEntity*>
 // Renders a mesh given its transform and material
 void Renderer::renderMeshWithMaterial(const Matrix44 model, GFX::Mesh* mesh, SCN::Material* material)
 {
-	//in case there is nothing to do
+	// in case there is nothing to do
 	if (!mesh || !mesh->getNumVertices() || !material)
 		return;
 	assert(glGetError() == GL_NO_ERROR);
 
-	//define locals to simplify coding
+	// define locals to simplify coding
 	GFX::Shader* shader = NULL;
 	Camera* camera = Camera::current;
 
 	glEnable(GL_DEPTH_TEST);
 
-	//chose a shader
-
-	// FOR TESTING WE CAN TURN THIS ON AGAIN
-	//shader = GFX::Shader::Get("texture");
-	
-	// For Assignment 2, we are changing this to lighting!
+	// Choose our forward shader
 	shader = GFX::Shader::Get("lighting");
 
 	assert(glGetError() == GL_NO_ERROR);
 
-	//no shader? then nothing to render
+	// no shader? then nothing to render
 	if (!shader)
 		return;
 	shader->enable();
 
-	// FOR PHONG
+	// Handle material blending options
 	if (material->isTransparent()) {
 		glEnable(GL_BLEND);
 		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -665,138 +688,62 @@ void Renderer::renderMeshWithMaterial(const Matrix44 model, GFX::Mesh* mesh, SCN
 		glDepthMask(GL_TRUE); // Write to depth buffer
 	}
 
-
-	//PHONG MULTICALL
-	// We are preparing our color, and intensities from the shader.
-	std::vector<vec3> light_positions;		// This gives us the position of the lights
-	std::vector<vec3> light_colors;			// This is the RGB values of the light that is emitted.
-	std::vector<float> light_intensities;	// Lightintensity as we know it.
-
-	// Here we initialize the new lists for the light types and direction
-	std::vector<vec3> light_directions;
-	std::vector<int> light_types; // We know NO_LIGHT = 0, POINT = 1, SPOT = 2, DIRECTIONAL = 3. This has been set beforehand
-
-	// This is for the spot light, as we need to define the cones
-	std::vector<vec2> light_cones; // x: cos(inner), y: cos(outer)
-
-	// Here we fill the lists we just defined
-	for (LightEntity* light : lights_list) {
-		light_positions.push_back(light->root.getGlobalMatrix().getTranslation());		// Light positions
-		light_colors.push_back(light->color);											// Light colors
-		light_intensities.push_back(light->intensity);									// Light intensity
-
-		// Directional and spot lights need the "front" vector aka direction the light is looking
-		light_directions.push_back(light->root.getGlobalMatrix().frontVector());
-
-		// Get the enum to int (Point 1, Spot = 2, Directional = 3)
-		light_types.push_back((int)light->light_type);
-
-		// Cos functions needed for the cone
-		float cos_inner = cos(light->cone_info.x * DEG2RAD);
-		float cos_outer = cos(light->cone_info.y * DEG2RAD);
-		light_cones.push_back(vec2(cos_inner, cos_outer));
-	}
-
-	// upload the shader uniforms so we can use them in the shader.
-	// According to gemini it might be faster if we do this in renderScene instead of every Mesh. (keep in mind if we need better efficiency)
-	shader->setUniform("u_num_lights", (int)light_positions.size());										//set a uniform for the amount of lights existing
-	shader->setUniform3Array("u_light_positions", (float*)light_positions.data(), light_positions.size());  //set a uniform to access light positions
-	shader->setUniform3Array("u_light_colors", (float*)light_colors.data(), light_positions.size());		//set a uniform to access light colors 
-	shader->setUniform1Array("u_light_intensities", light_intensities.data(), light_positions.size());		//set a uniform to access light intensities
-	// We split for the single and multi-pass but first we need to set the common uniforms:
-	
-	//upload uniforms
+	// 1. Upload basic transform transformations first
 	shader->setUniform("u_model", model);
 	shader->setUniform("u_viewprojection", camera->viewprojection_matrix);
 	shader->setUniform("u_camera_position", camera->eye);
-	//upload uniforms, single call
 
-	//Upload shader uniforms
-	// Hardcoding every light
-	if (lights_list.size() > 0 && shadow_fbos[0] && shadow_fbos[0]->depth_texture)
+	// 2. Bind the textures FIRST so we don't overwrite texture slot registers
+	material->bind(shader);
+
+	// 3. ONLY execute forward lighting/shadow uploads if we are natively inside the standard lighting pass
+	if (shader == GFX::Shader::Get("lighting"))
 	{
-		shader->setUniform("u_light_viewprojections[0]", light_viewprojections[0]);
-		shader->setUniform("u_shadow_maps[0]", shadow_fbos[0]->depth_texture, 8);
-		shader->setUniform("u_cast_shadows[0]", lights_list[0]->cast_shadows);
+		uploadLights(shader, lights_list);
+
+		int num_shadow_lights = (int)lights_list.size();
+		if (num_shadow_lights > 4) num_shadow_lights = 4;
+		for (int i = 0; i < num_shadow_lights; ++i)
+		{
+			if (!shadow_fbos[i] || !shadow_fbos[i]->depth_texture) continue;
+
+			std::string vp_name = "u_light_viewprojections[" + std::to_string(i) + "]";
+			std::string sm_name = "u_shadow_maps[" + std::to_string(i) + "]";
+			std::string cast_name = "u_cast_shadows[" + std::to_string(i) + "]";
+
+			shader->setUniform(vp_name.c_str(), light_viewprojections[i]);
+			shader->setUniform(sm_name.c_str(), shadow_fbos[i]->depth_texture, 4 + i);
+			shader->setUniform(cast_name.c_str(), (int)lights_list[i]->cast_shadows);
+		}
+
+		shader->setUniform("u_shadow_bias", shadow_bias);
 	}
 
-	if (lights_list.size() > 1 && shadow_fbos[1] && shadow_fbos[1]->depth_texture)
-	{
-		shader->setUniform("u_light_viewprojections[1]", light_viewprojections[1]);
-		shader->setUniform("u_shadow_maps[1]", shadow_fbos[1]->depth_texture, 9);
-		shader->setUniform("u_cast_shadows[1]", lights_list[1]->cast_shadows);
-	}
-
-	if (lights_list.size() > 2 && shadow_fbos[2] && shadow_fbos[2]->depth_texture)
-	{
-		shader->setUniform("u_light_viewprojections[2]", light_viewprojections[2]);
-		shader->setUniform("u_shadow_maps[2]", shadow_fbos[2]->depth_texture, 10);
-		shader->setUniform("u_cast_shadows[2]", lights_list[2]->cast_shadows);
-	}
-
-	if (lights_list.size() > 3 && shadow_fbos[3] && shadow_fbos[3]->depth_texture)
-	{
-		shader->setUniform("u_light_viewprojections[3]", light_viewprojections[3]);
-		shader->setUniform("u_shadow_maps[3]", shadow_fbos[3]->depth_texture, 11);
-		shader->setUniform("u_cast_shadows[3]", lights_list[3]->cast_shadows);
-	}
-
-	/*Cant get this to work without having "invalid comparator" or iniform crashes
-	for (int i = 0; i < lights_list.size(); ++i)
-	{
-		shader->setUniform(
-			("u_light_viewprojections[" + std::to_string(i) + "]").c_str(),
-			light_viewprojections[i]
-		);
-		
-		shader->setUniform(
-			("u_shadow_maps[" + std::to_string(i) + "]").c_str(),
-			shadow_fbos[i]->depth_texture,
-			8 + i
-		);
-		
-		shader->setUniform(
-			("u_cast_shadows[" + std::to_string(i) + "]").c_str(),
-			lights_list[i]->cast_shadows
-		);
-
-	}
-*/
-	shader->setUniform("u_shadow_bias", shadow_bias);
-	
-	// Upload camera uniforms
-	//shader->setUniform("u_viewprojection", camera->viewprojection_matrix);
-	//shader->setUniform("u_camera_position", camera->eye);
-
-
-	int num_lights = (int)light_positions.size();
-	
-
-
-	// Upload time, for cool shader effects
+	// Upload time factor for shaders
 	float t = getTime();
 	shader->setUniform("u_time", t);
 
-	// Render just the verticies as a wireframe
+	// Wireframe override toggle check
 	if (render_wireframe)
 		glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
 
-	material->bind(shader);
-	// We don't even need Multi-pass so we will let it stay like this.
-	uploadLights(shader, lights_list);
-
-	//do the draw call that renders the mesh into the screen
+	// Execute the Draw Call
 	mesh->render(GL_TRIANGLES);
 
-	//disable shader
+	// 4. CLEAN up active shadow texture units immediately after drawing geometry
+	if (shader == GFX::Shader::Get("lighting")) {
+		for (int i = 0; i < 4; ++i) {
+			glActiveTexture(GL_TEXTURE4 + i);
+			glBindTexture(GL_TEXTURE_2D, 0);
+		}
+	}
+	glActiveTexture(GL_TEXTURE0); // Fall back to safe default target slot
+
+	// Disable active program
 	shader->disable();
 
-	//set the render state as it was before to avoid problems with future renders
-	//glDisable(GL_BLEND);
+	// Restore global raster defaults
 	glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-
-
-
 }
 
 void Renderer::renderShadowMap(SCN::Scene* scene)
@@ -870,6 +817,8 @@ void Renderer::renderShadowMap(SCN::Scene* scene)
 
 		shadow_fbos[i]->unbind();
 	}
+
+	glActiveTexture(GL_TEXTURE0);
 }
 
 #ifndef SKIP_IMGUI

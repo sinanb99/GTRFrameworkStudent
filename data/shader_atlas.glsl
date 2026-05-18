@@ -226,7 +226,7 @@ uniform sampler2D u_texture;
 uniform float u_alpha_cutoff;
 
 uniform sampler2D u_normal_texture;
-uniform bool u_has_normal_map;
+uniform int u_has_normal_map;
 
 layout(location = 0) out vec4 out_albedo;
 layout(location = 1) out vec4 out_perturbed_normal;
@@ -263,7 +263,7 @@ void main()
 	vec3 N_geo = normalize(v_normal);
 	vec3 N_perturbed = N_geo;
 
-	if(u_has_normal_map)
+	if(u_has_normal_map != 0)
 	{
 		vec3 normal_pixel = texture(u_normal_texture, v_uv).xyz;
 		normal_pixel = normal_pixel * 2.0 - 1.0;
@@ -274,7 +274,6 @@ void main()
 	out_perturbed_normal = vec4(N_perturbed * 0.5 + 0.5, 1.0);
 	out_geometric_normal = vec4(N_geo * 0.5 + 0.5, 1.0);
 }
-
 \deferred.fs
 #version 330 core
 in vec2 v_uv;
@@ -293,6 +292,12 @@ uniform vec3 u_light_directions[10];
 uniform vec3 u_light_colors[10];
 uniform float u_light_intensities[10];
 
+// Shadow uniform arrays
+uniform mat4 u_light_viewprojections[4];
+uniform sampler2D u_shadow_maps[4];
+uniform int u_cast_shadows[4];
+uniform float u_shadow_bias;
+
 out vec4 FragColor;
 
 void main()
@@ -302,7 +307,6 @@ void main()
 
 	vec4 albedo = texture(u_color_texture, v_uv);
 	
-	// Unpack both vectors properly from their native targets
 	vec3 N = normalize(texture(u_normal_texture, v_uv).xyz * 2.0 - 1.0);
 	vec3 N_geo = normalize(texture(u_geo_normal_texture, v_uv).xyz * 2.0 - 1.0);
 
@@ -319,32 +323,46 @@ void main()
 	for (int i = 0; i < u_num_lights; i++)
 	{
 		vec3 L = normalize(u_light_directions[i] * -1.0);
+		float shadow_factor = 1.0;
 
-		// --- IMPLEMENTED EXACTLY LIKE YOUR LIGHTING.FS ---
-		// 1. Diffuse (Lambert) using normal map
+		// Directional shadow pass matching forward logic
+		if(i < 4 && u_cast_shadows[i] != 0)
+		{
+			vec4 light_clip_pos = u_light_viewprojections[i] * vec4(WP, 1.0);
+			vec3 proj_coords = light_clip_pos.xyz / light_clip_pos.w;
+			proj_coords = proj_coords * 0.5 + 0.5;
+
+			if(proj_coords.x >= 0.0 && proj_coords.x <= 1.0 &&
+			   proj_coords.y >= 0.0 && proj_coords.y <= 1.0)
+			{
+				float current_depth = proj_coords.z;
+				float closest_depth = texture(u_shadow_maps[i], proj_coords.xy).r;
+
+				if(current_depth > closest_depth + u_shadow_bias)
+				{
+					shadow_factor = 0.0;
+				}
+			}
+		}
+
 		float NdotL = max(0.0, dot(N, L));
-		
-		// 2. Physical geometric limit using true mesh geometry
 		float NdotL_geo = max(0.0, dot(N_geo, L)); 
 		
-		// Combine them together to naturally gate light-leaks without a manual threshold
-		vec3 diffuse = (NdotL * NdotL_geo) * (u_light_colors[i] * u_light_intensities[i]);
+		vec3 light_energy = u_light_colors[i] * u_light_intensities[i] * shadow_factor;
+		vec3 diffuse = (NdotL * NdotL_geo) * light_energy;
 
-		// 3. Specular (Phong)
-		float spec_strength = 0.5; // Baseline fallback fallback value for deferred channel mapping
+		float spec_strength = 0.5;
 		vec3 R = reflect(-L, N);
 		float RdotV = max(0.0, dot(R, V));
-		float spec_factor = pow(RdotV, 32.0); // Clean shininess match
+		float spec_factor = pow(RdotV, 32.0);
 		
-		// Only calculate specular highlights if the real geometry plane faces the light source
-		vec3 specular = (NdotL_geo > 0.0) ? (spec_factor * spec_strength * (u_light_colors[i] * u_light_intensities[i])) : vec3(0.0);
+		vec3 specular = (NdotL_geo > 0.0) ? (spec_factor * spec_strength * light_energy) : vec3(0.0);
 
 		total_direct_light += (diffuse * albedo.xyz) + specular;
 	}
 
 	FragColor = vec4(ambient + total_direct_light, 1.0);
 }
-
 
 \lightvolume.fs
 #version 330 core
@@ -356,13 +374,19 @@ uniform mat4 u_inverse_viewprojection;
 uniform vec3 u_camera_position;
 uniform vec2 u_screen_size;
 
-// These MUST be arrays of size 1 to receive data from uploadLights!
+// Individual light arrays from uploadLights
 uniform vec3 u_light_positions[1];
 uniform vec3 u_light_colors[1];
 uniform float u_light_intensities[1];
 uniform vec3 u_light_directions[1];
 uniform int u_light_types[1];
 uniform vec2 u_light_cones[1];
+
+// Localized single active shadow uniforms
+uniform mat4 u_light_viewprojection;
+uniform sampler2D u_shadow_map;
+uniform int u_cast_shadows;
+uniform float u_shadow_bias;
 
 out vec4 FragColor;
 
@@ -393,13 +417,31 @@ void main()
 		attenuation *= spot_factor;
 	}
 
-	// --- LOCAL LIGHT VALVE FIX ---
+	// --- SINGLE VOLUME SHADOW CALCULATION ---
+	float shadow_factor = 1.0;
+	if(u_cast_shadows != 0)
+	{
+		vec4 light_clip_pos = u_light_viewprojection * vec4(WP, 1.0);
+		vec3 proj_coords = light_clip_pos.xyz / light_clip_pos.w;
+		proj_coords = proj_coords * 0.5 + 0.5;
+
+		if(proj_coords.x >= 0.0 && proj_coords.x <= 1.0 &&
+		   proj_coords.y >= 0.0 && proj_coords.y <= 1.0)
+		{
+			float current_depth = proj_coords.z;
+			float closest_depth = texture(u_shadow_map, proj_coords.xy).r;
+
+			if(current_depth > closest_depth + u_shadow_bias)
+			{
+				shadow_factor = 0.0;
+			}
+		}
+	}
+
 	float NdotL = max(dot(N, L), 0.0);
-	
-	// Soft self-shadowing factor removes lighting leaks on steep geometry angles
 	float micro_shadow = clamp(NdotL * 4.0, 0.0, 1.0); 
 
-	vec3 light_energy = u_light_colors[0] * u_light_intensities[0] * attenuation;
+	vec3 light_energy = u_light_colors[0] * u_light_intensities[0] * attenuation * shadow_factor;
 	vec3 lighting = albedo.xyz * light_energy * NdotL * micro_shadow;
 
 	FragColor = vec4(lighting, 1.0);
@@ -471,12 +513,12 @@ uniform vec2 u_light_cones[10];
 
 // New Uniforms for normal mapping
 uniform sampler2D u_normal_texture;
-uniform bool u_has_normal_map;
+uniform int u_has_normal_map;
 
 //Shadow map uniforms
 uniform mat4 u_light_viewprojections[4];
 uniform sampler2D u_shadow_maps[4];
-uniform bool u_cast_shadows[4];
+uniform int u_cast_shadows[4];
 uniform float u_shadow_bias;
 
 // Updating the shininess here
@@ -517,7 +559,7 @@ void main()
 	vec3 N_geo = normalize(v_normal);								// Normal vector, so direction the surface is "facing"
 	vec3 N = N_geo;
 	
-	if(u_has_normal_map)
+	if(u_has_normal_map != 0)
 	{
 		// Get normal from texture (always 0 to 1 range)
 		vec3 normal_pixel = texture(u_normal_texture, v_uv).xyz;
@@ -561,7 +603,7 @@ void main()
 		float shadow_factor = 1.0; // Standard: no shadow
 
         // Calculating shadow
-if(i < 4 && u_cast_shadows[i])
+if(i < 4 && u_cast_shadows[i] != 0)
 {
     // Convert world space to homogeneous space
     vec4 light_clip_pos =
@@ -670,5 +712,5 @@ if(i < 4 && u_cast_shadows[i])
 out vec4 FragColor;
 
 void main(){
-FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+	//FragColor = vec4(0.0, 0.0, 0.0, 1.0);
 }
