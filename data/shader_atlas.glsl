@@ -213,6 +213,7 @@ void main()
 }
 
 \gbuffer.fs
+\gbuffer.fs
 #version 330 core
 in vec3 v_position;
 in vec3 v_world_position;
@@ -224,17 +225,56 @@ uniform vec4 u_color;
 uniform sampler2D u_texture;
 uniform float u_alpha_cutoff;
 
+uniform sampler2D u_normal_texture;
+uniform bool u_has_normal_map;
+
 layout(location = 0) out vec4 out_albedo;
-layout(location = 1) out vec4 out_normal;
+layout(location = 1) out vec4 out_normal; // We will utilize all channels
+
+// Helper function to build the TBN matrix using screen derivatives
+mat3 cotangent_frame(vec3 N, vec3 p, vec2 uv)
+{
+	vec3 dp1 = dFdx(p);
+	vec3 dp2 = dFdy(p);
+	vec2 duv1 = dFdx(uv);
+	vec2 duv2 = dFdy(uv);
+
+	vec3 dp2perp = cross(dp2, N);
+	vec3 dp1perp = cross(N, dp1);
+	vec3 T = dp2perp * duv1.x + dp1perp * duv2.x;
+	vec3 B = dp2perp * duv1.y + dp1perp * duv2.y;
+
+	float invmax = inversesqrt(max(dot(T, T), dot(B, B)));
+	return mat3(T * invmax, B * invmax, N);
+}
+
+vec3 perturbNormal(vec3 N, vec3 WP, vec2 uv, vec3 normal_pixel)
+{
+	mat3 TBN = cotangent_frame(N, WP, uv);
+	return normalize(TBN * normal_pixel);
+}
 
 void main()
 {
 	vec4 color = u_color * texture(u_texture, v_uv);
 	if (color.a < u_alpha_cutoff) discard;
 
-	vec3 N = normalize(v_normal);
+	vec3 N_geo = normalize(v_normal);
+	vec3 N_perturbed = N_geo;
+
+	if(u_has_normal_map)
+	{
+		vec3 normal_pixel = texture(u_normal_texture, v_uv).xyz;
+		normal_pixel = normal_pixel * 2.0 - 1.0;
+		N_perturbed = perturbNormal(v_normal, v_world_position, v_uv, normal_pixel);
+	}
+
 	out_albedo = color;
-	out_normal = vec4(N * 0.5 + 0.5, 1.0); // Pack matching normal data [-1,1] -> [0,1]
+	
+	// Pack Perturbed Normal into RGB, and Geometric Normal into Alpha/W
+	// Since we only need 2D projection or simple sign tracking, packing the signs works perfectly.
+	out_normal.xyz = N_perturbed * 0.5 + 0.5;
+	out_normal.w = N_geo.z * 0.5 + 0.5; // Tracking the raw geometric depth facing direction
 }
 
 \deferred.fs

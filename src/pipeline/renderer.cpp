@@ -276,15 +276,45 @@ void Renderer::renderGBuffer(Camera* camera)
 
 	shader->enable();
 	shader->setUniform("u_viewprojection", camera->viewprojection_matrix);
+	// Pass extra parameters your gbuffer.fs might expect
+	shader->setUniform("u_camera_position", camera->eye);
+	shader->setUniform("u_time", (float)getTime());
 
 	for (sRenderable& call : opaque_list) {
 		if (!call.mesh || !call.material) continue;
-		call.material->bind(shader);
+		if (call.material->alpha_mode == SCN::eAlphaMode::BLEND) continue; // Skip transparency
+
+		// Set base transforms and colors
 		shader->setUniform("u_model", call.model);
+		shader->setUniform("u_color", call.material->color);
+		shader->setUniform("u_alpha_cutoff",
+			call.material->alpha_mode == SCN::eAlphaMode::MASK ? call.material->alpha_cutoff : 0.001f); //
+
+		// 1. Bind the Albedo (Color) Texture to slot 0
+		GFX::Texture* albedo_tex = call.material->textures[SCN::eTextureChannel::ALBEDO].texture;
+		if (!albedo_tex) albedo_tex = GFX::Texture::getWhiteTexture(); // fallback
+		shader->setUniform("u_texture", albedo_tex, 0);
+
+		// 2. Bind the Normal Map Texture to slot 1 and flag the shader
+		GFX::Texture* normal_tex = call.material->textures[SCN::eTextureChannel::NORMALMAP].texture;
+		if (normal_tex) {
+			shader->setUniform("u_normal_texture", normal_tex, 1); // Bind normal map to texture unit 1
+			shader->setUniform("u_has_normal_map", true);
+		}
+		else {
+			shader->setUniform("u_has_normal_map", false);
+		}
+
+		// Handle two-sided rendering if specified by the material
+		if (call.material->two_sided) glDisable(GL_CULL_FACE);
+		else glEnable(GL_CULL_FACE);
+
+		// Render the geometry
 		call.mesh->render(GL_TRIANGLES);
 	}
 
 	shader->disable();
+	glEnable(GL_CULL_FACE); // restore defaults
 	gbuffer_fbo->unbind();
 }
 
@@ -581,6 +611,11 @@ void Renderer::renderMeshWithMaterial(const Matrix44 model, GFX::Mesh* mesh, SCN
 #ifndef SKIP_IMGUI
 void Renderer::showUI()
 {
+	// Pipeline Switch toggle requirement
+	ImGui::Text("Pipeline Selection:");
+	ImGui::Checkbox("Use Deferred Renderer", &use_deferred);
+	ImGui::Separator();
+
 	// 1. Basic Checkboxes
 	ImGui::Checkbox("Wireframe", &render_wireframe);
 	ImGui::Checkbox("Boundaries", &render_boundaries);
