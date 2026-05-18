@@ -64,13 +64,33 @@ using namespace SCN;
 //some globals
 GFX::Mesh sphere;
 
-Renderer::Renderer(const char* shader_atlas_filename)
+
+// This is our struct that describes the renderables. 
+struct sRenderable
+{
+	GFX::Mesh* mesh; // Pointer to the Vertex, or Index Buffer. This is the "what" of the object (3D coordiantes, normals,...)
+	SCN::Material* material; // This defines Shaders and Textures, tells GPU how to interpret light, color, and roughness
+	Matrix44 model; // The transfomration to move from object space to world space
+	float distance; // If the material is see-through, we must order by distance. (Z-Direction)
+};
+
+std::vector<sRenderable> render_list; // render_list that includes everything that is to be rendered.
+std::vector<sRenderable> opaque_list; // only not see through things
+std::vector<sRenderable> transparent_list; // See through things, ordered the other way around
+
+// Phong Lighting
+std::vector<LightEntity*> lights_list;
+
+
+Renderer::Renderer(const char* shader_atlas_filename, int width, int height)
 {
 	render_wireframe = false;
 	render_boundaries = false;
 	render_mode = SINGLE_PASS; // Initialize it to single pass by default
 	scene = nullptr;
 	skybox_cubemap = nullptr;
+	screen_width = width;
+	screen_height = height;
 
 	if (!GFX::Shader::LoadAtlas(shader_atlas_filename))
 		exit(1);
@@ -79,9 +99,16 @@ Renderer::Renderer(const char* shader_atlas_filename)
 	sphere.createSphere(1.0f);
 	sphere.uploadToVRAM();
 
+	// G-Buffer: color target 0 = albedo, color target 1 = packed normals
+	gbuffer_fbo = new GFX::FBO();
+	gbuffer_fbo->create(width, height, 3, GL_RGBA, GL_UNSIGNED_BYTE, true);
+
+	// Light FBO
+	light_fbo = new GFX::FBO();
+	light_fbo->create(width, height, 1, GL_RGBA, GL_UNSIGNED_BYTE, true);
 	shadow_light_index = 1;
 
-	// 3.1 — Depth-only FBO, 1024x1024
+	// 3.1 â€” Depth-only FBO, 1024x1024
 	//shadow_fbo = new GFX::FBO();
 	//shadow_fbo->setDepthOnly(1024, 1024);
 	// Initialize the array to null
@@ -103,7 +130,6 @@ void Renderer::setupScene()
 	else
 		skybox_cubemap = nullptr;
 }
-
 
 // This is our struct that describes the renderables. 
 struct sRenderable
@@ -227,6 +253,16 @@ void Renderer::parseSceneEntities(SCN::Scene* scene, Camera* cam) {
 	
 }
 
+void Renderer::renderDeferred(SCN::Scene* scene, Camera* camera)
+{
+	renderGBuffer(camera);
+	renderDeferredAmbientAndDirectional(camera);
+	renderLightVolumes(camera);
+	renderTransparencies(camera);
+
+	// Present accumulation frame buffer directly onto screen viewport
+	light_fbo->color_textures[0]->toViewport();
+}
 
 
 void Renderer::renderScene(SCN::Scene* scene, Camera* camera)
@@ -241,11 +277,17 @@ void Renderer::renderScene(SCN::Scene* scene, Camera* camera)
 	camera->updateProjectionMatrix();
 	camera->extractFrustum();
 
-
-	parseSceneEntities(scene, light_camera);
-	renderShadowMap(scene);
-	//lights_list.clear();
 	parseSceneEntities(scene, camera);
+
+	if (use_deferred)
+		renderDeferred(scene, camera);
+	else
+	{
+		renderForward(scene, camera);
+	}
+} // NEED TO REMOVE THIS SOON FOR TESTING
+
+void Renderer::renderForward(SCN::Scene * scene, Camera * camera) {
 
 	//set the clear color (the background color)
 	glClearColor(scene->background_color.x, scene->background_color.y, scene->background_color.z, 1.0);
@@ -287,6 +329,206 @@ void Renderer::renderScene(SCN::Scene* scene, Camera* camera)
 	glDisable(GL_BLEND);
 
 
+}
+
+
+// G-Buffer renderer for Assignment 4
+void Renderer::renderGBuffer(Camera* camera)
+{
+	gbuffer_fbo->bind();
+	glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+	glEnable(GL_DEPTH_TEST);
+	glDepthMask(GL_TRUE);
+	glDisable(GL_BLEND);
+	glEnable(GL_CULL_FACE);
+	glCullFace(GL_BACK);
+
+	GFX::Shader* shader = GFX::Shader::Get("gbuffer");
+	if (!shader) {
+		gbuffer_fbo->unbind();
+		return;
+	}
+
+	shader->enable();
+	shader->setUniform("u_viewprojection", camera->viewprojection_matrix);
+	// Pass extra parameters your gbuffer.fs might expect
+	shader->setUniform("u_camera_position", camera->eye);
+	shader->setUniform("u_time", (float)getTime());
+
+	for (sRenderable& call : opaque_list) {
+		if (!call.mesh || !call.material) continue;
+		if (call.material->alpha_mode == SCN::eAlphaMode::BLEND) continue; // Skip transparency
+
+		// Set base transforms and colors
+		shader->setUniform("u_model", call.model);
+		shader->setUniform("u_color", call.material->color);
+		shader->setUniform("u_alpha_cutoff",
+			call.material->alpha_mode == SCN::eAlphaMode::MASK ? call.material->alpha_cutoff : 0.001f); //
+
+		// 1. Bind the Albedo (Color) Texture to slot 0
+		GFX::Texture* albedo_tex = call.material->textures[SCN::eTextureChannel::ALBEDO].texture;
+		if (!albedo_tex) albedo_tex = GFX::Texture::getWhiteTexture(); // fallback
+		shader->setUniform("u_texture", albedo_tex, 0);
+
+		// 2. Bind the Normal Map Texture to slot 1 and flag the shader
+		GFX::Texture* normal_tex = call.material->textures[SCN::eTextureChannel::NORMALMAP].texture;
+		if (normal_tex) {
+			shader->setUniform("u_normal_texture", normal_tex, 1); // Bind normal map to texture unit 1
+			shader->setUniform("u_has_normal_map", true);
+		}
+		else {
+			shader->setUniform("u_has_normal_map", false);
+		}
+
+		// Handle two-sided rendering if specified by the material
+		if (call.material->two_sided) glDisable(GL_CULL_FACE);
+		else glEnable(GL_CULL_FACE);
+
+		// Render the geometry
+		call.mesh->render(GL_TRIANGLES);
+	}
+
+	shader->disable();
+	glEnable(GL_CULL_FACE); // restore defaults
+	gbuffer_fbo->unbind();
+}
+
+void Renderer::renderDeferredAmbientAndDirectional(Camera* camera)
+{
+	// Blending and depth for the base pass mapping inside the light_fbo
+	gbuffer_fbo->depth_texture->copyTo(light_fbo->depth_texture);
+
+	light_fbo->bind();
+	glClearColor(scene->background_color.x, scene->background_color.y, scene->background_color.z, 1.0f);
+	glClear(GL_COLOR_BUFFER_BIT);
+
+	if (skybox_cubemap) renderSkybox(skybox_cubemap);
+
+	glDisable(GL_DEPTH_TEST);
+	glDepthMask(GL_FALSE);
+	glDisable(GL_BLEND);
+
+	GFX::Shader* shader = GFX::Shader::Get("deferred");
+	if (!shader) {
+		light_fbo->unbind();
+		return;
+	}
+
+	shader->enable();
+
+	// Bind depth map and properties for screen-space coordinate evaluations
+	shader->enable();
+	shader->setUniform("u_color_texture", gbuffer_fbo->color_textures[0], 0);
+	shader->setUniform("u_normal_texture", gbuffer_fbo->color_textures[1], 1);
+	shader->setUniform("u_geo_normal_texture", gbuffer_fbo->color_textures[2], 3); // Bind to unit 3
+	shader->setUniform("u_depth_texture", gbuffer_fbo->depth_texture, 2);
+
+	shader->setUniform("u_inverse_viewprojection", camera->inverse_viewprojection_matrix);
+	shader->setUniform("u_ambient_light", scene->ambient_light);
+	shader->setUniform("u_camera_position", camera->eye);
+
+	// Group and pass directional light vectors down
+	std::vector<LightEntity*> dir_lights;
+	for (auto* l : lights_list) {
+		if (l->light_type == eLightType::DIRECTIONAL) dir_lights.push_back(l);
+	}
+	uploadLights(shader, dir_lights);
+
+	GFX::Mesh* quad = GFX::Mesh::getQuad();
+	quad->render(GL_TRIANGLES);
+
+	shader->disable();
+	light_fbo->unbind();
+}
+
+void Renderer::renderLightVolumes(Camera* camera)
+{
+	light_fbo->bind();
+
+	// Explicitly target localized intersection testing using depth states
+	glEnable(GL_DEPTH_TEST);
+	glDepthFunc(GL_GREATER);
+	glDepthMask(GL_FALSE);
+
+	glEnable(GL_BLEND);
+	glBlendFunc(GL_ONE, GL_ONE); // Pure Additive Blending 
+
+	glEnable(GL_CULL_FACE);
+	glCullFace(GL_FRONT); // Rasterize backfaces inside volume coordinates
+
+	GFX::Shader* shader = GFX::Shader::Get("lightvolume");
+	if (!shader) {
+		glDepthFunc(GL_LESS);
+		glDisable(GL_BLEND);
+		glCullFace(GL_BACK);
+		light_fbo->unbind();
+		return;
+	}
+
+	shader->enable();
+
+	shader->enable();
+	shader->setUniform("u_color_texture", gbuffer_fbo->color_textures[0], 0);
+	shader->setUniform("u_normal_texture", gbuffer_fbo->color_textures[1], 1);
+	shader->setUniform("u_depth_texture", gbuffer_fbo->depth_texture, 2);
+
+
+	shader->setUniform("u_inverse_viewprojection", camera->inverse_viewprojection_matrix);
+	shader->setUniform("u_camera_position", camera->eye);
+	shader->setUniform("u_screen_size", vec2((float)screen_width, (float)screen_height));
+
+	for (auto* light : lights_list) {
+		if (light->light_type == eLightType::DIRECTIONAL) continue;
+
+		// Frame light arrays down individually for localized intersections
+		std::vector<LightEntity*> single_light = { light };
+		uploadLights(shader, single_light);
+
+		Matrix44 light_model = light->root.getGlobalMatrix();
+		Vector3f light_pos = light_model.getTranslation();
+
+		Matrix44 volume_model;
+		volume_model.setIdentity();
+		volume_model.setTranslation(light_pos.x, light_pos.y, light_pos.z);
+		volume_model.scale(light->max_distance, light->max_distance, light->max_distance);
+
+		shader->setUniform("u_model", volume_model);
+		shader->setUniform("u_viewprojection", camera->viewprojection_matrix);
+
+		sphere.render(GL_TRIANGLES);
+	}
+
+	shader->disable();
+
+	// Standardize pipeline settings out to default 
+	glDepthFunc(GL_LESS);
+	glDepthMask(GL_TRUE);
+	glDisable(GL_BLEND);
+	glCullFace(GL_BACK);
+	light_fbo->unbind();
+}
+
+void Renderer::renderTransparencies(Camera* camera)
+{
+	light_fbo->bind();
+	glEnable(GL_DEPTH_TEST);
+	glDepthMask(GL_FALSE);
+	glEnable(GL_BLEND);
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+	std::sort(transparent_list.begin(), transparent_list.end(), [](const sRenderable& a, const sRenderable& b) {
+		return a.distance > b.distance;
+		});
+
+	for (const sRenderable& call : transparent_list) {
+		renderMeshWithMaterial(call.model, call.mesh, call.material);
+	}
+
+	glDepthMask(GL_TRUE);
+	glDisable(GL_BLEND);
+	light_fbo->unbind();
 }
 
 
@@ -633,6 +875,10 @@ void Renderer::renderShadowMap(SCN::Scene* scene)
 #ifndef SKIP_IMGUI
 void Renderer::showUI()
 {
+	// Pipeline Switch toggle requirement
+	ImGui::Text("Pipeline Selection:");
+	ImGui::Checkbox("Use Deferred Renderer", &use_deferred);
+	ImGui::Separator();
 
 	// 1. Basic Checkboxes
 	ImGui::Checkbox("Wireframe", &render_wireframe);

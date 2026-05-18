@@ -7,7 +7,13 @@ lighting basic.vs lighting.fs
 multi basic.vs multi.fs
 plain basic.vs plain.fs
 lighting basic.vs lighting.fs
+<<<<<<< HEAD
 lighting_PBR basic.vs lighting_PBR.fs
+=======
+gbuffer basic.vs gbuffer.fs
+deferred quad.vs deferred.fs
+lightvolume basic.vs lightvolume.fs
+>>>>>>> origin/Assignment_4
 
 \perturbNormal
 // From https://github.com/glslify/glsl-perturb-normal/blob/master/cotangent-frame.glsl
@@ -211,6 +217,197 @@ void main()
 		FragColor = vec4( n * (z + 1.0) / (f + n - z * (f - n)) );
 }
 
+\gbuffer.fs
+#version 330 core
+in vec3 v_position;
+in vec3 v_world_position;
+in vec3 v_normal;
+in vec2 v_uv;
+in vec4 v_color;
+
+uniform vec4 u_color;
+uniform sampler2D u_texture;
+uniform float u_alpha_cutoff;
+
+uniform sampler2D u_normal_texture;
+uniform bool u_has_normal_map;
+
+layout(location = 0) out vec4 out_albedo;
+layout(location = 1) out vec4 out_perturbed_normal;
+layout(location = 2) out vec4 out_geometric_normal;
+
+// Helper function to build the TBN matrix using screen derivatives
+mat3 cotangent_frame(vec3 N, vec3 p, vec2 uv)
+{
+	vec3 dp1 = dFdx(p);
+	vec3 dp2 = dFdy(p);
+	vec2 duv1 = dFdx(uv);
+	vec2 duv2 = dFdy(uv);
+
+	vec3 dp2perp = cross(dp2, N);
+	vec3 dp1perp = cross(N, dp1);
+	vec3 T = dp2perp * duv1.x + dp1perp * duv2.x;
+	vec3 B = dp2perp * duv1.y + dp1perp * duv2.y;
+
+	float invmax = inversesqrt(max(dot(T, T), dot(B, B)));
+	return mat3(T * invmax, B * invmax, N);
+}
+
+vec3 perturbNormal(vec3 N, vec3 WP, vec2 uv, vec3 normal_pixel)
+{
+	mat3 TBN = cotangent_frame(N, WP, uv);
+	return normalize(TBN * normal_pixel);
+}
+
+void main()
+{
+	vec4 color = u_color * texture(u_texture, v_uv);
+	if (color.a < u_alpha_cutoff) discard;
+
+	vec3 N_geo = normalize(v_normal);
+	vec3 N_perturbed = N_geo;
+
+	if(u_has_normal_map)
+	{
+		vec3 normal_pixel = texture(u_normal_texture, v_uv).xyz;
+		normal_pixel = normal_pixel * 2.0 - 1.0;
+		N_perturbed = perturbNormal(v_normal, v_world_position, v_uv, normal_pixel);
+	}
+
+	out_albedo = color;
+	out_perturbed_normal = vec4(N_perturbed * 0.5 + 0.5, 1.0);
+	out_geometric_normal = vec4(N_geo * 0.5 + 0.5, 1.0);
+}
+
+\deferred.fs
+#version 330 core
+in vec2 v_uv;
+
+uniform sampler2D u_color_texture;
+uniform sampler2D u_normal_texture;
+uniform sampler2D u_geo_normal_texture; 
+uniform sampler2D u_depth_texture;
+uniform mat4 u_inverse_viewprojection;
+
+uniform vec3 u_ambient_light;
+uniform vec3 u_camera_position;
+
+uniform int u_num_lights;
+uniform vec3 u_light_directions[10];
+uniform vec3 u_light_colors[10];
+uniform float u_light_intensities[10];
+
+out vec4 FragColor;
+
+void main()
+{
+	float depth = texture(u_depth_texture, v_uv).x;
+	if (depth >= 1.0) discard;
+
+	vec4 albedo = texture(u_color_texture, v_uv);
+	
+	// Unpack both vectors properly from their native targets
+	vec3 N = normalize(texture(u_normal_texture, v_uv).xyz * 2.0 - 1.0);
+	vec3 N_geo = normalize(texture(u_geo_normal_texture, v_uv).xyz * 2.0 - 1.0);
+
+	// Reconstruct 3D Position
+	vec4 screen_pos = vec4(v_uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+	vec4 world_pos = u_inverse_viewprojection * screen_pos;
+	vec3 WP = world_pos.xyz / world_pos.w;
+
+	vec3 V = normalize(u_camera_position - WP);
+
+	vec3 ambient = albedo.xyz * u_ambient_light;
+	vec3 total_direct_light = vec3(0.0);
+
+	for (int i = 0; i < u_num_lights; i++)
+	{
+		vec3 L = normalize(u_light_directions[i] * -1.0);
+
+		// --- IMPLEMENTED EXACTLY LIKE YOUR LIGHTING.FS ---
+		// 1. Diffuse (Lambert) using normal map
+		float NdotL = max(0.0, dot(N, L));
+		
+		// 2. Physical geometric limit using true mesh geometry
+		float NdotL_geo = max(0.0, dot(N_geo, L)); 
+		
+		// Combine them together to naturally gate light-leaks without a manual threshold
+		vec3 diffuse = (NdotL * NdotL_geo) * (u_light_colors[i] * u_light_intensities[i]);
+
+		// 3. Specular (Phong)
+		float spec_strength = 0.5; // Baseline fallback fallback value for deferred channel mapping
+		vec3 R = reflect(-L, N);
+		float RdotV = max(0.0, dot(R, V));
+		float spec_factor = pow(RdotV, 32.0); // Clean shininess match
+		
+		// Only calculate specular highlights if the real geometry plane faces the light source
+		vec3 specular = (NdotL_geo > 0.0) ? (spec_factor * spec_strength * (u_light_colors[i] * u_light_intensities[i])) : vec3(0.0);
+
+		total_direct_light += (diffuse * albedo.xyz) + specular;
+	}
+
+	FragColor = vec4(ambient + total_direct_light, 1.0);
+}
+
+
+\lightvolume.fs
+#version 330 core
+uniform sampler2D u_color_texture;
+uniform sampler2D u_normal_texture;
+uniform sampler2D u_depth_texture;
+uniform mat4 u_inverse_viewprojection;
+
+uniform vec3 u_camera_position;
+uniform vec2 u_screen_size;
+
+// These MUST be arrays of size 1 to receive data from uploadLights!
+uniform vec3 u_light_positions[1];
+uniform vec3 u_light_colors[1];
+uniform float u_light_intensities[1];
+uniform vec3 u_light_directions[1];
+uniform int u_light_types[1];
+uniform vec2 u_light_cones[1];
+
+out vec4 FragColor;
+
+void main()
+{
+	vec2 uv = gl_FragCoord.xy / u_screen_size;
+	float depth = texture(u_depth_texture, uv).x;
+	if (depth >= 1.0) discard;
+
+	vec4 albedo = texture(u_color_texture, uv);
+	vec3 N = normalize(texture(u_normal_texture, uv).xyz * 2.0 - 1.0);
+
+	vec4 screen_pos = vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+	vec4 world_pos = u_inverse_viewprojection * screen_pos;
+	vec3 WP = world_pos.xyz / world_pos.w;
+
+	vec3 L_vec = u_light_positions[0] - WP;
+	float dist = length(L_vec);
+	vec3 L = normalize(L_vec);
+
+	float attenuation = 1.0 / (1.0 + dist * dist);
+
+	if(u_light_types[0] == 2)
+	{
+		vec3 D = normalize(u_light_directions[0]);
+		float cos_angle = dot(D, L);
+		float spot_factor = smoothstep(u_light_cones[0].y, u_light_cones[0].x, cos_angle);
+		attenuation *= spot_factor;
+	}
+
+	// --- LOCAL LIGHT VALVE FIX ---
+	float NdotL = max(dot(N, L), 0.0);
+	
+	// Soft self-shadowing factor removes lighting leaks on steep geometry angles
+	float micro_shadow = clamp(NdotL * 4.0, 0.0, 1.0); 
+
+	vec3 light_energy = u_light_colors[0] * u_light_intensities[0] * attenuation;
+	vec3 lighting = albedo.xyz * light_energy * NdotL * micro_shadow;
+
+	FragColor = vec4(lighting, 1.0);
+}
 
 \instanced.vs
 
