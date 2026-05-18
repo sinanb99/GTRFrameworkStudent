@@ -656,6 +656,7 @@ namespace GFX {
 		GLint loc = getLocation(varname);
 		CHECK_SHADER_VAR(loc, varname);
 		glUniform1i(loc, input1);
+		// printf("[setUniform1] varname='%s' loc=%d value=%d error%d\n", varname, loc, input1, glGetError());
 		assert(glGetError() == GL_NO_ERROR);
 	}
 
@@ -792,6 +793,7 @@ namespace GFX {
 		GLint loc = getLocation(varname);
 		CHECK_SHADER_VAR(loc, varname);
 		glUniformMatrix4fv(loc, 1, GL_FALSE, m.m);
+		// printf("[setMatrix44] varname='%s' loc=%d error=%d\n", varname, loc, glGetError());
 		assert(glGetError() == GL_NO_ERROR);
 	}
 

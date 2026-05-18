@@ -18,6 +18,7 @@ namespace SCN {
 	class Prefab;
 	class Material;
 
+
 	// For the switch between multi and single pass:
 	enum eRenderMode {
 		SINGLE_PASS,
@@ -50,8 +51,6 @@ namespace SCN {
 		// Screen dimensions
 		int screen_width;
 		int screen_height;
-
-		std::vector<SCN::LightEntity*> lights_list; // We create a list of lights, so we can work through all the lights we get (Need to be a lightentity obviously)
 
 		//updated every frame
 		// Updated for Assignment 4
