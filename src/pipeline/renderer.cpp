@@ -403,7 +403,7 @@ void Renderer::renderMeshWithMaterial(const Matrix44 model, GFX::Mesh* mesh, SCN
 	//shader = GFX::Shader::Get("texture");
 	
 	// For Assignment 2, we are changing this to lighting!
-	shader = GFX::Shader::Get("lighting");
+	shader = GFX::Shader::Get("lighting_PBR");
 
 	assert(glGetError() == GL_NO_ERROR);
 
