@@ -1,8 +1,8 @@
 #pragma once
 #include "scene.h"
 #include "prefab.h"
-
 #include "light.h"
+#include <vector>
 
 //forward declarations
 class Camera;
@@ -32,17 +32,30 @@ namespace SCN {
 		bool render_wireframe;
 		bool render_boundaries;
 
+		// Assignment 4 Toggle
+		bool use_deferred;
+
 		// This is added to decide what mode we are using (0 for Single, 1 for Multi)
 		int render_mode;
 
 		GFX::Texture* skybox_cubemap;
-
 		SCN::Scene* scene;
+
+		// G-Buffer FBO: stores color (target 0) and normals (target 1) + depth
+		GFX::FBO* gbuffer_fbo;
+
+		// Light FBO: final lighting accumulation buffer (same size as screen)
+		GFX::FBO* light_fbo;
+
+		// Screen dimensions
+		int screen_width;
+		int screen_height;
 
 		std::vector<SCN::LightEntity*> lights_list; // We create a list of lights, so we can work through all the lights we get (Need to be a lightentity obviously)
 
 		//updated every frame
-		Renderer(const char* shaders_atlas_filename );
+		// Updated for Assignment 4
+		Renderer(const char* shaders_atlas_filename, int width, int height);
 
 		//just to be sure we have everything ready for the rendering
 		void setupScene();
@@ -56,6 +69,24 @@ namespace SCN {
 
 		//renders several elements of the scene
 		void renderScene(SCN::Scene* scene, Camera* camera);
+
+		// Forward pipeline (original single/multi pass logic)
+		void renderForward(SCN::Scene* scene, Camera* camera);
+
+		// Deferred pipeline entry point
+		void renderDeferred(SCN::Scene* scene, Camera* camera);
+
+		// G-Buffer
+		void renderGBuffer(Camera* camera);
+
+		// Single pass deferred: ambient + directional via fullscreen quad
+		void renderDeferredAmbientAndDirectional(Camera* camera);
+
+		// Light-Volumes: point and spot lights as spheres
+		void renderLightVolumes(Camera* camera);
+
+		// Transparent rendering 
+		void renderTransparencies(Camera* camera);
 
 		//render the skybox
 		void renderSkybox(GFX::Texture* cubemap);
