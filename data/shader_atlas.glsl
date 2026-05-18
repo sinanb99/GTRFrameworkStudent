@@ -213,7 +213,6 @@ void main()
 }
 
 \gbuffer.fs
-\gbuffer.fs
 #version 330 core
 in vec3 v_position;
 in vec3 v_world_position;
@@ -229,7 +228,8 @@ uniform sampler2D u_normal_texture;
 uniform bool u_has_normal_map;
 
 layout(location = 0) out vec4 out_albedo;
-layout(location = 1) out vec4 out_normal; // We will utilize all channels
+layout(location = 1) out vec4 out_perturbed_normal;
+layout(location = 2) out vec4 out_geometric_normal;
 
 // Helper function to build the TBN matrix using screen derivatives
 mat3 cotangent_frame(vec3 N, vec3 p, vec2 uv)
@@ -270,11 +270,8 @@ void main()
 	}
 
 	out_albedo = color;
-	
-	// Pack Perturbed Normal into RGB, and Geometric Normal into Alpha/W
-	// Since we only need 2D projection or simple sign tracking, packing the signs works perfectly.
-	out_normal.xyz = N_perturbed * 0.5 + 0.5;
-	out_normal.w = N_geo.z * 0.5 + 0.5; // Tracking the raw geometric depth facing direction
+	out_perturbed_normal = vec4(N_perturbed * 0.5 + 0.5, 1.0);
+	out_geometric_normal = vec4(N_geo * 0.5 + 0.5, 1.0);
 }
 
 \deferred.fs
@@ -283,52 +280,70 @@ in vec2 v_uv;
 
 uniform sampler2D u_color_texture;
 uniform sampler2D u_normal_texture;
+uniform sampler2D u_geo_normal_texture; 
 uniform sampler2D u_depth_texture;
 uniform mat4 u_inverse_viewprojection;
 
 uniform vec3 u_ambient_light;
 uniform vec3 u_camera_position;
 
-// Match the full array sizing from your C++ uploadLights method
 uniform int u_num_lights;
-uniform vec3 u_light_positions[10];
+uniform vec3 u_light_directions[10];
 uniform vec3 u_light_colors[10];
 uniform float u_light_intensities[10];
-uniform vec3 u_light_directions[10];
-uniform int u_light_types[10];
 
 out vec4 FragColor;
 
 void main()
 {
 	float depth = texture(u_depth_texture, v_uv).x;
-	if (depth >= 1.0) discard; // Don't light the skybox area!
+	if (depth >= 1.0) discard;
 
 	vec4 albedo = texture(u_color_texture, v_uv);
-	vec3 normal_packed = texture(u_normal_texture, v_uv).xyz;
-	vec3 N = normalize(normal_packed * 2.0 - 1.0);
+	
+	// Unpack both vectors properly from their native targets
+	vec3 N = normalize(texture(u_normal_texture, v_uv).xyz * 2.0 - 1.0);
+	vec3 N_geo = normalize(texture(u_geo_normal_texture, v_uv).xyz * 2.0 - 1.0);
 
-	// Reconstruct 3D Position vector from screen space coordinates
+	// Reconstruct 3D Position
 	vec4 screen_pos = vec4(v_uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
 	vec4 world_pos = u_inverse_viewprojection * screen_pos;
 	vec3 WP = world_pos.xyz / world_pos.w;
 
-	// Calculate baseline ambient lighting
-	vec3 illumination = albedo.xyz * u_ambient_light;
+	vec3 V = normalize(u_camera_position - WP);
 
-	// Process all global directional lights in this pass
-	for(int i = 0; i < u_num_lights; i++)
+	vec3 ambient = albedo.xyz * u_ambient_light;
+	vec3 total_direct_light = vec3(0.0);
+
+	for (int i = 0; i < u_num_lights; i++)
 	{
-		if(u_light_types[i] == 3) // Directional Light
-		{
-			vec3 L = normalize(u_light_directions[i] * -1.0);
-			float NdotL = max(0.0, dot(N, L));
-			illumination += albedo.xyz * u_light_colors[i] * u_light_intensities[i] * NdotL;
-		}
+		vec3 L = normalize(u_light_directions[i] * -1.0);
+
+		// --- IMPLEMENTED EXACTLY LIKE YOUR LIGHTING.FS ---
+		// 1. Diffuse (Lambert) using normal map
+		float NdotL = max(0.0, dot(N, L));
+		
+		// 2. Physical geometric limit using true mesh geometry
+		float NdotL_geo = max(0.0, dot(N_geo, L)); 
+		
+		// Combine them together to naturally gate light-leaks without a manual threshold
+		vec3 diffuse = (NdotL * NdotL_geo) * (u_light_colors[i] * u_light_intensities[i]);
+
+		// 3. Specular (Phong)
+		float spec_strength = 0.5; // Baseline fallback fallback value for deferred channel mapping
+		vec3 R = reflect(-L, N);
+		float RdotV = max(0.0, dot(R, V));
+		float spec_factor = pow(RdotV, 32.0); // Clean shininess match
+		
+		// Only calculate specular highlights if the real geometry plane faces the light source
+		vec3 specular = (NdotL_geo > 0.0) ? (spec_factor * spec_strength * (u_light_colors[i] * u_light_intensities[i])) : vec3(0.0);
+
+		total_direct_light += (diffuse * albedo.xyz) + specular;
 	}
 
-	FragColor = vec4(illumination, 1.0);
+	FragColor = vec4(ambient + total_direct_light, 1.0);
 }
+
 
 \lightvolume.fs
 #version 330 core
@@ -353,27 +368,22 @@ out vec4 FragColor;
 void main()
 {
 	vec2 uv = gl_FragCoord.xy / u_screen_size;
-
 	float depth = texture(u_depth_texture, uv).x;
 	if (depth >= 1.0) discard;
 
 	vec4 albedo = texture(u_color_texture, uv);
-	vec3 normal_packed = texture(u_normal_texture, uv).xyz;
-	vec3 N = normalize(normal_packed * 2.0 - 1.0);
+	vec3 N = normalize(texture(u_normal_texture, uv).xyz * 2.0 - 1.0);
 
 	vec4 screen_pos = vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
 	vec4 world_pos = u_inverse_viewprojection * screen_pos;
 	vec3 WP = world_pos.xyz / world_pos.w;
 
-	// Point & Spot Light Vector Math
 	vec3 L_vec = u_light_positions[0] - WP;
 	float dist = length(L_vec);
 	vec3 L = normalize(L_vec);
 
-	// Quadratic Attenuation (Matches your forward pipeline lighting.fs perfectly)
 	float attenuation = 1.0 / (1.0 + dist * dist);
 
-	// If it's a Spot Light, apply the cone calculations
 	if(u_light_types[0] == 2)
 	{
 		vec3 D = normalize(u_light_directions[0]);
@@ -382,9 +392,14 @@ void main()
 		attenuation *= spot_factor;
 	}
 
+	// --- LOCAL LIGHT VALVE FIX ---
 	float NdotL = max(dot(N, L), 0.0);
+	
+	// Soft self-shadowing factor removes lighting leaks on steep geometry angles
+	float micro_shadow = clamp(NdotL * 4.0, 0.0, 1.0); 
+
 	vec3 light_energy = u_light_colors[0] * u_light_intensities[0] * attenuation;
-	vec3 lighting = albedo.xyz * light_energy * NdotL;
+	vec3 lighting = albedo.xyz * light_energy * NdotL * micro_shadow;
 
 	FragColor = vec4(lighting, 1.0);
 }

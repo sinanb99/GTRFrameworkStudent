@@ -64,7 +64,7 @@ Renderer::Renderer(const char* shader_atlas_filename, int width, int height)
 
 	// G-Buffer: color target 0 = albedo, color target 1 = packed normals
 	gbuffer_fbo = new GFX::FBO();
-	gbuffer_fbo->create(width, height, 2, GL_RGBA, GL_UNSIGNED_BYTE, true);
+	gbuffer_fbo->create(width, height, 3, GL_RGBA, GL_UNSIGNED_BYTE, true);
 
 	// Light FBO
 	light_fbo = new GFX::FBO();
@@ -345,6 +345,7 @@ void Renderer::renderDeferredAmbientAndDirectional(Camera* camera)
 	shader->enable();
 	shader->setUniform("u_color_texture", gbuffer_fbo->color_textures[0], 0);
 	shader->setUniform("u_normal_texture", gbuffer_fbo->color_textures[1], 1);
+	shader->setUniform("u_geo_normal_texture", gbuffer_fbo->color_textures[2], 3); // Bind to unit 3
 	shader->setUniform("u_depth_texture", gbuffer_fbo->depth_texture, 2);
 
 	shader->setUniform("u_inverse_viewprojection", camera->inverse_viewprojection_matrix);
