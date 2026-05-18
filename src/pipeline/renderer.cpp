@@ -131,21 +131,7 @@ void Renderer::setupScene()
 		skybox_cubemap = nullptr;
 }
 
-// This is our struct that describes the renderables. 
-struct sRenderable
-{
-	GFX::Mesh* mesh; // Pointer to the Vertex, or Index Buffer. This is the "what" of the object (3D coordiantes, normals,...)
-	SCN::Material* material; // This defines Shaders and Textures, tells GPU how to interpret light, color, and roughness
-	Matrix44 model; // The transfomration to move from object space to world space
-	float distance = 0.0f; // If the material is see-through, we must order by distance. (Z-Direction)
-};
 
-std::vector<sRenderable> render_list; // render_list that includes everything that is to be rendered.
-std::vector<sRenderable> opaque_list; // only not see through things
-std::vector<sRenderable> transparent_list; // See through things, ordered the other way around
-
-// Phong Lighting
-std::vector<LightEntity*> lights_list;
 
 /** * Recursively flattens the scene hierarchy into a linear render list.
  * Transforms local node coordinates into World Space for the GPU.

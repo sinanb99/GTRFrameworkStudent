@@ -7,13 +7,10 @@ lighting basic.vs lighting.fs
 multi basic.vs multi.fs
 plain basic.vs plain.fs
 lighting basic.vs lighting.fs
-<<<<<<< HEAD
 lighting_PBR basic.vs lighting_PBR.fs
-=======
 gbuffer basic.vs gbuffer.fs
 deferred quad.vs deferred.fs
 lightvolume basic.vs lightvolume.fs
->>>>>>> origin/Assignment_4
 
 \perturbNormal
 // From https://github.com/glslify/glsl-perturb-normal/blob/master/cotangent-frame.glsl
