@@ -3,14 +3,15 @@ flat basic.vs flat.fs
 texture basic.vs texture.fs
 skybox basic.vs skybox.fs
 depth quad.vs depth.fs
+lighting basic.vs lighting.fs
 multi basic.vs multi.fs
+plain basic.vs plain.fs
 lighting basic.vs lighting.fs
 gbuffer basic.vs gbuffer.fs
 deferred quad.vs deferred.fs
 lightvolume basic.vs lightvolume.fs
 
 \perturbNormal
-
 // From https://github.com/glslify/glsl-perturb-normal/blob/master/cotangent-frame.glsl
 mat3 cotangent_frame(vec3 N, vec3 p, vec2 uv)
 {
@@ -440,6 +441,7 @@ void main()
 	gl_Position = u_viewprojection * vec4( v_world_position, 1.0 );
 }
 
+
 \lighting.fs
 
 #version 330 core
@@ -470,6 +472,12 @@ uniform vec2 u_light_cones[10];
 // New Uniforms for normal mapping
 uniform sampler2D u_normal_texture;
 uniform bool u_has_normal_map;
+
+//Shadow map uniforms
+uniform mat4 u_light_viewprojections[4];
+uniform sampler2D u_shadow_maps[4];
+uniform bool u_cast_shadows[4];
+uniform float u_shadow_bias;
 
 // Updating the shininess here
 uniform float u_shininess;
@@ -549,6 +557,45 @@ void main()
 		// as we need to switch between light types, we will only initialize a few things
 		vec3 L;
 		float attenuation = 1.0;
+
+		float shadow_factor = 1.0; // Standard: no shadow
+
+        // Calculating shadow
+if(i < 4 && u_cast_shadows[i])
+{
+    // Convert world space to homogeneous space
+    vec4 light_clip_pos =
+        u_light_viewprojections[i]
+        * vec4(v_world_position, 1.0);
+
+    // Perspective division
+    vec3 proj_coords =
+        light_clip_pos.xyz / light_clip_pos.w;
+
+    // Transform from Clip Space [-1,1]
+    // to Texture Space [0,1]
+    proj_coords = proj_coords * 0.5 + 0.5;
+
+    // Only calculate when inside shadow map
+    if(proj_coords.x >= 0.0 && proj_coords.x <= 1.0 &&
+       proj_coords.y >= 0.0 && proj_coords.y <= 1.0)
+    {
+        float current_depth = proj_coords.z;
+
+        float closest_depth =
+            texture(
+                u_shadow_maps[i],
+                proj_coords.xy
+            ).r;
+
+        
+
+        if(current_depth > closest_depth + u_shadow_bias)
+        {
+            shadow_factor = 0.0;
+        }
+    }
+}
 		
 		if(u_light_types[i] == 1) // Point light
 		{
@@ -561,7 +608,6 @@ void main()
 		}
 		else if(u_light_types[i] == 2) // Spot light
 		{
-			// proper spotlight
 			vec3 L_vec = u_light_positions[i] - v_world_position;
 			float dist = length(L_vec);
 			L = normalize(L_vec);
@@ -590,7 +636,8 @@ void main()
 		}
 
 
-		vec3 light_energy = u_light_colors[i] * u_light_intensities[i] * attenuation;
+        // We multiply the lightenergy with shadow_factor
+        vec3 light_energy = u_light_colors[i] * u_light_intensities[i] * attenuation * shadow_factor;
 
 		// Diffuse (Lambert)
 		float NdotL = max(0.0, dot(N, L));
@@ -614,4 +661,14 @@ void main()
 
 	// Final Color
 	FragColor = vec4(ambient + total_direct_light, u_color.a * tex_color.a);
+}
+
+\plain.fs
+
+#version 330 core
+
+out vec4 FragColor;
+
+void main(){
+FragColor = vec4(0.0, 0.0, 0.0, 1.0);
 }

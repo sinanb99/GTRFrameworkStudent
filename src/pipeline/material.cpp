@@ -11,7 +11,7 @@ std::map<std::string, Material*> Material::sMaterials;
 uint32 Material::s_last_index = 0;
 Material Material::default_material;
 
-const char* SCN::texture_channel_str[] = { "ALBEDO","EMISSIVE","OPACITY","METALLIC_ROUGHNESS","OCCLUSION","NORMALMAP" };
+const char* SCN::texture_channel_str[] = { "ALBEDO","EMISSIVE","OPACITY","METALLIC_ROUGHNESS","OCCLUSION","NORMALMAP", "SHININESS"};
 
 
 Material* Material::Get(const char* name)
@@ -56,10 +56,7 @@ void Material::Release()
 	sMaterials.clear();
 }
 
-// Transparency checker for Assignment 1
-bool Material::isTransparent() const {
-	return alpha_mode == SCN::eAlphaMode::BLEND;
-}
+
 
 void Material::bind(GFX::Shader* shader) {
 	// First, configure the OpenGL state with the material settings =======================
@@ -88,6 +85,7 @@ void Material::bind(GFX::Shader* shader) {
 	   Now we need to swtich for the metallic_roughness, the normal map and else.
 	*/
 	{
+
 		GFX::Texture* albedo_texture = textures[SCN::eTextureChannel::ALBEDO].texture;
 
 		// HERE =====================
@@ -99,6 +97,7 @@ void Material::bind(GFX::Shader* shader) {
 		// ==========================
 
 		// We always force a default albedo texture
+
 		if (albedo_texture == NULL)
 			albedo_texture = GFX::Texture::getWhiteTexture(); //a 1x1 white texture
 
@@ -129,4 +128,10 @@ void Material::bind(GFX::Shader* shader) {
 		// This is used to say which is the alpha threshold to what we should not paint a pixel on the screen (to cut polygons according to texture alpha)
 		shader->setUniform("u_alpha_cutoff", alpha_mode == SCN::eAlphaMode::MASK ? alpha_cutoff : 0.001f);
 	}
+}
+
+//Checks if Material is transparent
+bool Material::isTransparent() const
+{
+	return alpha_mode == SCN::eAlphaMode::BLEND;
 }

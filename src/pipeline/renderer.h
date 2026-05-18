@@ -56,6 +56,25 @@ namespace SCN {
 		//updated every frame
 		// Updated for Assignment 4
 		Renderer(const char* shaders_atlas_filename, int width, int height);
+		// Shadow map resources
+		GFX::FBO* shadow_fbo = nullptr;
+		Camera* light_camera = nullptr;
+		Matrix44 light_viewprojection;
+		float shadow_bias = 0.001f;
+		int shadow_light_index = 0;
+		bool shadow_front_face_culling = true;
+
+		GFX::FBO* shadow_fbos[4];
+
+		// Array to store the view-projection matrix for each light
+		Matrix44 light_viewprojections[4];
+
+		// And declare the method:
+		void renderShadowMap(SCN::Scene* scene);
+		std::vector<SCN::LightEntity*> lights_list; // We create a list of lights, so we can work through all the lights we get (Need to be a lightentity obviously)
+
+		//updated every frame
+		Renderer(const char* shaders_atlas_filename);
 
 		//just to be sure we have everything ready for the rendering
 		void setupScene();
@@ -64,6 +83,8 @@ namespace SCN {
 
 		//add here your functions
 		//...
+
+		void collectLights(Scene* scene);
 
 		void parseSceneEntities(SCN::Scene* scene, Camera* camera);
 
@@ -95,6 +116,8 @@ namespace SCN {
 		void renderMeshWithMaterial(const Matrix44 model, GFX::Mesh* mesh, SCN::Material* material);
 
 		void showUI();
+
+
 	};
 
 };
