@@ -33,6 +33,17 @@ namespace SCN {
 		bool render_wireframe;
 		bool render_boundaries;
 
+		// Assignment 6 SSAO
+		bool use_ssao = true;
+		int ssao_samples = 32;
+		float ssao_radius = 0.3f;
+
+		// HDR configuration properties
+		bool use_hdr = true;
+		float hdr_exposure = 1.0f;
+
+		GFX::FBO* ssao_fbo = nullptr;
+
 		// Assignment 4 Toggle
 		bool use_deferred;
 
@@ -115,6 +126,10 @@ namespace SCN {
 		void showUI();
 
 
+	private:
+
+		std::vector<Vector3f> ssao_kernel;
+		void generateSSAOKernel();
 	};
 
 };
