@@ -242,6 +242,32 @@ void Renderer::parseSceneEntities(SCN::Scene* scene, Camera* cam) {
 void Renderer::renderDeferred(SCN::Scene* scene, Camera* camera)
 {
 	renderGBuffer(camera);
+
+	if (use_ssao) {
+		ssao_fbo->bind();
+		glClearColor(1.0f, 1.0f, 1.0f, 1.0f); // Default to full light intensity
+		glClear(GL_COLOR_BUFFER_BIT);
+
+		GFX::Shader* ssao_shader = GFX::Shader::Get("ssao");
+		if (ssao_shader) {
+			ssao_shader->enable();
+			ssao_shader->setUniform("u_normal_texture", gbuffer_fbo->color_textures[1], 1);
+			ssao_shader->setUniform("u_depth_texture", gbuffer_fbo->depth_texture, 2);
+
+			ssao_shader->setUniform("u_viewprojection", camera->viewprojection_matrix);
+			ssao_shader->setUniform("u_inverse_viewprojection", camera->inverse_viewprojection_matrix);
+			ssao_shader->setUniform("u_num_samples", ssao_samples);
+			ssao_shader->setUniform("u_radius", ssao_radius);
+			ssao_shader->setUniform3Array("u_samples", (float*)ssao_kernel.data(), ssao_kernel.size());
+
+			GFX::Mesh* quad = GFX::Mesh::getQuad();
+			quad->render(GL_TRIANGLES);
+			ssao_shader->disable();
+		}
+		ssao_fbo->unbind();
+	}
+
+
 	renderDeferredAmbientAndDirectional(camera);
 	renderLightVolumes(camera);
 	renderTransparencies(camera);
@@ -427,6 +453,11 @@ void Renderer::renderDeferredAmbientAndDirectional(Camera* camera)
 	shader->setUniform("u_camera_position", camera->eye);
 	shader->setUniform("u_shadow_bias", shadow_bias);
 
+	// Pass SSAO properties down to the deferred shader
+	shader->setUniform("u_use_ssao", (int)use_ssao);
+	if (use_ssao) {
+		shader->setUniform("u_ssao_texture", ssao_fbo->color_textures[0], 5);
+	}
 
 	// Group and pass directional light vectors down
 	uploadLights(shader, lights_list);

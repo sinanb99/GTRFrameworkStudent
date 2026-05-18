@@ -1069,7 +1069,7 @@ void main() {
 }
 
 \ssao.fs
-#Version 330 core
+#version 330 core
 
 in vec2 v_uv;
 out float FragColor;
