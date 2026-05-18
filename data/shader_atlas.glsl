@@ -237,6 +237,86 @@ void main()
 	out_normal = vec4(N * 0.5 + 0.5, 1.0); // Pack matching normal data [-1,1] -> [0,1]
 }
 
+\deferred.fs
+#version 330 core
+in vec2 v_uv;
+
+uniform sampler2D u_color_texture;
+uniform sampler2D u_normal_texture;
+uniform sampler2D u_depth_texture;
+uniform mat4 u_inverse_viewprojection;
+
+uniform vec3 u_ambient_light;
+uniform vec3 u_camera_position;
+
+// Match original arrays inside uploadLights definitions
+uniform vec3 u_light_positions[5];
+uniform vec3 u_light_colors[5];
+
+out vec4 FragColor;
+
+void main()
+{
+	vec4 albedo = texture(u_color_texture, v_uv);
+	vec3 normal_packed = texture(u_normal_texture, v_uv).xyz;
+	vec3 N = normalize(normal_packed * 2.0 - 1.0);
+	float depth = texture(u_depth_texture, v_uv).x;
+
+	// Reconstruct 3D Position vector from full screen coordinate
+	vec4 screen_pos = vec4(v_uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+	vec4 world_pos = u_inverse_viewprojection * screen_pos;
+	vec3 WP = world_pos.xyz / world_pos.w;
+
+	// Base Ambient Component calculation 
+	vec3 illumination = albedo.xyz * u_ambient_light;
+
+	// Perform calculations for directional lights here if applicable
+	FragColor = vec4(illumination, albedo.a);
+}
+
+\lightvolume.fs
+#version 330 core
+uniform sampler2D u_color_texture;
+uniform sampler2D u_normal_texture;
+uniform sampler2D u_depth_texture;
+uniform mat4 u_inverse_viewprojection;
+
+uniform vec3 u_camera_position;
+uniform vec2 u_screen_size;
+
+// Targeted light configuration properties
+uniform vec3 u_light_position;
+uniform vec3 u_light_color;
+uniform float u_light_max_dist;
+
+out vec4 FragColor;
+
+void main()
+{
+	// Translate gl_FragCoord to specific viewport UV mappings
+	vec2 uv = gl_FragCoord.xy / u_screen_size;
+
+	vec4 albedo = texture(u_color_texture, uv);
+	vec3 normal_packed = texture(u_normal_texture, uv).xyz;
+	vec3 N = normalize(normal_packed * 2.0 - 1.0);
+	float depth = texture(u_depth_texture, uv).x;
+
+	vec4 screen_pos = vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+	vec4 world_pos = u_inverse_viewprojection * screen_pos;
+	vec3 WP = world_pos.xyz / world_pos.w;
+
+	// Point light calculation logic
+	vec3 L = u_light_position - WP;
+	float dist = length(L);
+	if (dist > u_light_max_dist) discard;
+
+	L = normalize(L);
+	float NdotL = max(dot(N, L), 0.0);
+	float attenuation = max(0.0, 1.0 - (dist / u_light_max_dist));
+
+	vec3 lighting = u_light_color * NdotL * attenuation * albedo.xyz;
+	FragColor = vec4(lighting, 1.0);
+}
 
 \instanced.vs
 

@@ -39,7 +39,7 @@ Application::Application()
 
 
 	//This class will be the one in charge of rendering all 
-	renderer = new SCN::Renderer(getRelativePath("data/shader_atlas.glsl").c_str()); //here so we have opengl ready in constructor
+	renderer = new SCN::Renderer(getRelativePath("data/shader_atlas.glsl").c_str(), window_width, window_height); //here so we have opengl ready in constructor
 
 	//our scene editor
 	editor = new SceneEditor(scene, renderer);

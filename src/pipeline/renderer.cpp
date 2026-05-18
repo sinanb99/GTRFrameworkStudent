@@ -179,6 +179,16 @@ void Renderer::parseSceneEntities(SCN::Scene* scene, Camera* cam) {
 	
 }
 
+void Renderer::renderDeferred(SCN::Scene* scene, Camera* camera)
+{
+	renderGBuffer(camera);
+	renderDeferredAmbientAndDirectional(camera);
+	renderLightVolumes(camera);
+	renderTransparencies(camera);
+
+	// Present accumulation frame buffer directly onto screen viewport
+	light_fbo->color_textures[0]->toViewport();
+}
 
 
 void Renderer::renderScene(SCN::Scene* scene, Camera* camera)
@@ -302,12 +312,10 @@ void Renderer::renderDeferredAmbientAndDirectional(Camera* camera)
 	shader->enable();
 
 	// Bind depth map and properties for screen-space coordinate evaluations
-	gbuffer_fbo->color_textures[0]->bind(0);
-	shader->setUniform("u_color_texture", 0);
-	gbuffer_fbo->color_textures[1]->bind(1);
-	shader->setUniform("u_normal_texture", 1);
-	gbuffer_fbo->depth_texture->bind(2);
-	shader->setUniform("u_depth_texture", 2);
+	shader->enable();
+	shader->setUniform("u_color_texture", gbuffer_fbo->color_textures[0], 0);
+	shader->setUniform("u_normal_texture", gbuffer_fbo->color_textures[1], 1);
+	shader->setUniform("u_depth_texture", gbuffer_fbo->depth_texture, 2);
 
 	shader->setUniform("u_inverse_viewprojection", camera->inverse_viewprojection_matrix);
 	shader->setUniform("u_ambient_light", scene->ambient_light);
@@ -353,12 +361,11 @@ void Renderer::renderLightVolumes(Camera* camera)
 
 	shader->enable();
 
-	gbuffer_fbo->color_textures[0]->bind(0);
-	shader->setUniform("u_color_texture", 0);
-	gbuffer_fbo->color_textures[1]->bind(1);
-	shader->setUniform("u_normal_texture", 1);
-	gbuffer_fbo->depth_texture->bind(2);
-	shader->setUniform("u_depth_texture", 2);
+	shader->enable();
+	shader->setUniform("u_color_texture", gbuffer_fbo->color_textures[0], 0);
+	shader->setUniform("u_normal_texture", gbuffer_fbo->color_textures[1], 1);
+	shader->setUniform("u_depth_texture", gbuffer_fbo->depth_texture, 2);
+
 
 	shader->setUniform("u_inverse_viewprojection", camera->inverse_viewprojection_matrix);
 	shader->setUniform("u_camera_position", camera->eye);
@@ -371,10 +378,15 @@ void Renderer::renderLightVolumes(Camera* camera)
 		std::vector<LightEntity*> single_light = { light };
 		uploadLights(shader, single_light);
 
-		Matrix44 model;
-		model.setTranslation(light->model.getTranslation());
-		model.scale(light->max_distance, light->max_distance, light->max_distance);
-		shader->setUniform("u_model", model);
+		Matrix44 light_model = light->root.getGlobalMatrix();
+		Vector3f light_pos = light_model.getTranslation();
+
+		Matrix44 volume_model;
+		volume_model.setIdentity();
+		volume_model.setTranslation(light_pos.x, light_pos.y, light_pos.z);
+		volume_model.scale(light->max_distance, light->max_distance, light->max_distance);
+
+		shader->setUniform("u_model", volume_model);
 		shader->setUniform("u_viewprojection", camera->viewprojection_matrix);
 
 		sphere.render(GL_TRIANGLES);
@@ -387,6 +399,27 @@ void Renderer::renderLightVolumes(Camera* camera)
 	glDepthMask(GL_TRUE);
 	glDisable(GL_BLEND);
 	glCullFace(GL_BACK);
+	light_fbo->unbind();
+}
+
+void Renderer::renderTransparencies(Camera* camera)
+{
+	light_fbo->bind();
+	glEnable(GL_DEPTH_TEST);
+	glDepthMask(GL_FALSE);
+	glEnable(GL_BLEND);
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+	std::sort(transparent_list.begin(), transparent_list.end(), [](const sRenderable& a, const sRenderable& b) {
+		return a.distance > b.distance;
+		});
+
+	for (const sRenderable& call : transparent_list) {
+		renderMeshWithMaterial(call.model, call.mesh, call.material);
+	}
+
+	glDepthMask(GL_TRUE);
+	glDisable(GL_BLEND);
 	light_fbo->unbind();
 }
 
