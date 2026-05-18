@@ -836,6 +836,17 @@ void Renderer::renderShadowMap(SCN::Scene* scene)
 #ifndef SKIP_IMGUI
 void Renderer::showUI()
 {
+	ImGui::Separator();
+	ImGui::Text("SSAO + Settings");
+	ImGui::Checkbox("Enable SSAO", &use_ssao);
+	ImGui::SliderInt("SSAO Samples", &ssao_samples, 1, 64);
+	ImGui::SliderFloat("SSAO Radius", &ssao_radius, 0.01f, 2.0f);
+
+	ImGui::Separator();
+	ImGui::Text("HDR Tone Mapping");
+	ImGui::Checkbox("Enable HDR Filmic Curve", &use_hdr);
+	ImGui::SliderFloat("HDR Exposure", &hdr_exposure, 0.1f, 5.0f);
+
 	// Pipeline Switch toggle requirement
 	ImGui::Text("Pipeline Selection:");
 	ImGui::Checkbox("Use Deferred Renderer", &use_deferred);
